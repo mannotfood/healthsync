@@ -1,8 +1,8 @@
 {
   "domain": "healthsync",
   "name": "HealthSync",
-  "codeowners": ["@mannotfood"],
   "after_dependencies": ["cloud"],
+  "codeowners": ["@mannotfood"],
   "config_flow": true,
   "dependencies": ["webhook"],
   "documentation": "https://github.com/mannotfood/healthsync",
