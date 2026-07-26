@@ -1,0 +1,19 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Set up HealthSync",
+        "description": "A webhook URL will be generated for the HealthSync iOS app. After setup, a notification shows the URL to paste into the app (Settings → Home Assistant).",
+        "data": {
+          "secret": "Shared secret (optional)"
+        },
+        "data_description": {
+          "secret": "If set, payloads without this secret are rejected. Enter the same value in the app's Settings."
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "HealthSync is already configured."
+    }
+  }
+}

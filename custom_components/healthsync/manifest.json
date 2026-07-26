@@ -1,0 +1,14 @@
+{
+  "domain": "healthsync",
+  "name": "HealthSync",
+  "codeowners": ["@jamiehill"],
+  "after_dependencies": ["cloud"],
+  "config_flow": true,
+  "dependencies": ["webhook"],
+  "documentation": "https://github.com/jamiehill/healthsync-ha",
+  "integration_type": "service",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/jamiehill/healthsync-ha/issues",
+  "requirements": [],
+  "version": "0.7.0"
+}
