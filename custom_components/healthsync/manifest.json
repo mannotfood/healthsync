@@ -1,14 +1,14 @@
 {
   "domain": "healthsync",
   "name": "HealthSync",
-  "codeowners": ["@jamiehill"],
+  "codeowners": ["@mannotfood"],
   "after_dependencies": ["cloud"],
   "config_flow": true,
   "dependencies": ["webhook"],
-  "documentation": "https://github.com/jamiehill/healthsync-ha",
+  "documentation": "https://github.com/mannotfood/healthsync",
   "integration_type": "service",
   "iot_class": "local_push",
-  "issue_tracker": "https://github.com/jamiehill/healthsync-ha/issues",
+  "issue_tracker": "https://github.com/mannotfood/healthsync/issues",
   "requirements": [],
   "version": "0.7.0"
 }
