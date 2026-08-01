@@ -6,6 +6,15 @@ to Home Assistant; this integration receives those pushes on a webhook and
 exposes them as sensor entities. Local push only — no cloud, no polling,
 no external dependencies.
 
+## Get the iOS app
+
+**HealthSync for Home Assistant** — iOS 17+, one-time purchase to unlock
+automatic background syncing (manual sync is free forever, no subscription),
+local-first with no third-party servers.
+
+**App Store:** currently in review — this link will be added as soon as it's
+live. In the meantime, watch/star this repo for updates.
+
 ## Entities
 
 | Entity | Meaning |
