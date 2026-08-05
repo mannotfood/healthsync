@@ -34,8 +34,9 @@ fires `healthsync_test` and a confirmation notification.
 
 ## Install
 
-**HACS (custom repository):** HACS → Integrations → ⋮ → Custom
-repositories → add this repo (category: Integration) → install → restart HA.
+**HACS:** HACS → Integrations → search "HealthSync" → install → restart HA.
+(Listed in HACS's default repositories as of 1 Aug 2026 — no custom
+repository step needed.)
 
 **Manual:** copy `custom_components/healthsync/` into your HA `config/custom_components/` and restart.
 
