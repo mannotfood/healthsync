@@ -16,7 +16,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import HealthSyncConfigEntry, HealthSyncData
-from .const import SIGNAL_WORKOUT
+from .const import SIGNAL_WORKOUT, WORKOUT_EVENT_TYPES
 from .sensor import workout_device_info
 
 
@@ -42,7 +42,11 @@ class WorkoutCompletedEvent(EventEntity):
     _attr_should_poll = False
     _attr_name = "Workout completed"
     _attr_icon = "mdi:run-fast"
-    _attr_event_types = ["workout_completed"]
+    # One event_type per workout activity (running, cycling, ...) rather
+    # than a single generic "workout_completed" for everything — so the
+    # Logbook line and the entity's own event history are distinguishable
+    # per entry instead of reading identically for every workout.
+    _attr_event_types = WORKOUT_EVENT_TYPES
 
     def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
         self._entry = entry
@@ -62,5 +66,13 @@ class WorkoutCompletedEvent(EventEntity):
 
     @callback
     def _handle_workout(self, workout: dict[str, Any]) -> None:
-        self._trigger_event("workout_completed", workout)
+        # Fall back to "other" for anything not in WORKOUT_EVENT_TYPES —
+        # e.g. a new HealthKit activity type the app maps but this list
+        # hasn't been updated for yet. _trigger_event raises ValueError for
+        # any type not in _attr_event_types, so this guards against a typo
+        # or drift silently breaking every future sync.
+        event_type = workout.get("workout_type")
+        if event_type not in WORKOUT_EVENT_TYPES:
+            event_type = "other"
+        self._trigger_event(event_type, workout)
         self.async_write_ha_state()
