@@ -59,8 +59,40 @@ async def async_setup_entry(
             SleepDurationSensor(entry, data),
             SleepTimestampSensor(entry, data, "onset", "Fell asleep", "mdi:weather-night"),
             SleepTimestampSensor(entry, data, "wake", "Woke up", "mdi:weather-sunset-up"),
+            WorkoutTypeSensor(entry, data),
+            WorkoutDurationSensor(entry, data),
+            WorkoutDistanceSensor(entry, data),
+            WorkoutCaloriesSensor(entry, data),
+            RecentWorkoutsSensor(entry, data),
             LastSyncSensor(entry, data),
         ]
+    )
+
+
+def _main_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
+    return DeviceInfo(
+        identifiers={(DOMAIN, entry.entry_id)},
+        name="HealthSync",
+        manufacturer="HealthSync",
+        model="Apple Health bridge",
+        entry_type=DeviceEntryType.SERVICE,
+    )
+
+
+def workout_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
+    """Workouts get their own device (added 11 Aug 2026) — there's enough
+    workout-specific data (type, duration, distance, calories, history) that
+    lumping it into the single flat HealthSync device got crowded. Linked via
+    `via_device` so it still shows as related to the main HealthSync device
+    in the UI rather than as an unrelated integration.
+    """
+    return DeviceInfo(
+        identifiers={(DOMAIN, f"{entry.entry_id}_workouts")},
+        name="HealthSync Workouts",
+        manufacturer="HealthSync",
+        model="Apple Health bridge",
+        entry_type=DeviceEntryType.SERVICE,
+        via_device=(DOMAIN, entry.entry_id),
     )
 
 
@@ -73,13 +105,7 @@ class HealthSyncSensor(SensorEntity):
     def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
         self._data = data
         self._entry = entry
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, entry.entry_id)},
-            name="HealthSync",
-            manufacturer="HealthSync",
-            model="Apple Health bridge",
-            entry_type=DeviceEntryType.SERVICE,
-        )
+        self._attr_device_info = _main_device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -94,6 +120,15 @@ class HealthSyncSensor(SensorEntity):
     @callback
     def _handle_update(self) -> None:
         self.async_write_ha_state()
+
+
+class HealthSyncWorkoutSensor(HealthSyncSensor):
+    """Same dispatcher-driven behaviour as HealthSyncSensor, but attached to
+    the separate "HealthSync Workouts" device."""
+
+    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
+        super().__init__(entry, data)
+        self._attr_device_info = workout_device_info(entry)
 
 
 class DailyTotalSensor(HealthSyncSensor, RestoreSensor):
@@ -276,6 +311,181 @@ class SleepTimestampSensor(HealthSyncSensor, RestoreSensor):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {"timestamp": self._current}
+
+
+class WorkoutTypeSensor(HealthSyncWorkoutSensor, RestoreSensor):
+    """Activity type of the most recent workout (added 11 Aug 2026).
+
+    State is a string (e.g. "running") rather than a typed value, so restore
+    goes through the plain `async_get_last_state()` path and reads
+    start/end back out of attributes — same pattern as `SleepTimestampSensor`.
+    """
+
+    _attr_icon = "mdi:run"
+    _attr_name = "Last workout type"
+
+    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
+        super().__init__(entry, data)
+        self._attr_unique_id = f"{entry.entry_id}_last_workout_type"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._data.last_workout_type is not None:
+            return
+        last_state = await self.async_get_last_state()
+        if last_state is None or last_state.state in (None, "unknown", "unavailable"):
+            return
+        self._data.last_workout_type = last_state.state
+        started = dt_util.parse_datetime(str(last_state.attributes.get("started_at", "")))
+        ended = dt_util.parse_datetime(str(last_state.attributes.get("ended_at", "")))
+        if started:
+            self._data.last_workout_start = started
+        if ended:
+            self._data.last_workout_end = ended
+
+    @property
+    def native_value(self) -> str | None:
+        return self._data.last_workout_type
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {
+            "started_at": self._data.last_workout_start,
+            "ended_at": self._data.last_workout_end,
+        }
+
+
+class WorkoutDurationSensor(HealthSyncWorkoutSensor, RestoreSensor):
+    """Duration of the most recent workout, in minutes."""
+
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "min"
+    _attr_icon = "mdi:timer-outline"
+    _attr_name = "Last workout duration"
+
+    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
+        super().__init__(entry, data)
+        self._attr_unique_id = f"{entry.entry_id}_last_workout_duration"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._data.last_workout_duration_min is not None:
+            return
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self._data.last_workout_duration_min = float(last.native_value)
+            except (TypeError, ValueError):
+                pass
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._data.last_workout_duration_min
+        return round(value, 1) if value is not None else None
+
+
+class WorkoutDistanceSensor(HealthSyncWorkoutSensor, RestoreSensor):
+    """Distance of the most recent workout, in meters.
+
+    Wire format sends raw meters with no conversion — `device_class:
+    distance` lets Home Assistant's own unit system (and per-entity display
+    overrides) handle presentation. Null for workouts without a meaningful
+    distance (yoga, strength training, ...).
+    """
+
+    _attr_device_class = SensorDeviceClass.DISTANCE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "m"
+    _attr_icon = "mdi:map-marker-distance"
+    _attr_name = "Last workout distance"
+
+    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
+        super().__init__(entry, data)
+        self._attr_unique_id = f"{entry.entry_id}_last_workout_distance"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._data.last_workout_distance_m is not None:
+            return
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self._data.last_workout_distance_m = float(last.native_value)
+            except (TypeError, ValueError):
+                pass
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._data.last_workout_distance_m
+        return round(value, 1) if value is not None else None
+
+
+class WorkoutCaloriesSensor(HealthSyncWorkoutSensor, RestoreSensor):
+    """Active energy burned during the most recent workout."""
+
+    _attr_device_class = SensorDeviceClass.ENERGY
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_native_unit_of_measurement = "kcal"
+    _attr_icon = "mdi:fire"
+    _attr_name = "Last workout calories"
+
+    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
+        super().__init__(entry, data)
+        self._attr_unique_id = f"{entry.entry_id}_last_workout_calories"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._data.last_workout_calories is not None:
+            return
+        last = await self.async_get_last_sensor_data()
+        if last is not None and last.native_value is not None:
+            try:
+                self._data.last_workout_calories = float(last.native_value)
+            except (TypeError, ValueError):
+                pass
+
+    @property
+    def native_value(self) -> float | None:
+        value = self._data.last_workout_calories
+        return round(value, 1) if value is not None else None
+
+
+class RecentWorkoutsSensor(HealthSyncWorkoutSensor, RestoreSensor):
+    """Rolling log of recent workouts (added 11 Aug 2026).
+
+    State is just a count so it reads sensibly on a dashboard; the actual
+    log — up to MAX_RECENT_WORKOUTS entries, newest first, each with
+    workout_type/started_at/ended_at/duration_min/distance_m/calories —
+    lives in the `workouts` attribute for templates, history cards, or
+    automations that want more than "the latest one".
+    """
+
+    _attr_icon = "mdi:history"
+    _attr_name = "Recent workouts"
+
+    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
+        super().__init__(entry, data)
+        self._attr_unique_id = f"{entry.entry_id}_recent_workouts"
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self._data.recent_workouts:
+            return
+        last_state = await self.async_get_last_state()
+        if last_state is None:
+            return
+        restored = last_state.attributes.get("workouts")
+        if isinstance(restored, list):
+            self._data.recent_workouts = [w for w in restored if isinstance(w, dict)]
+
+    @property
+    def native_value(self) -> int:
+        return len(self._data.recent_workouts)
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return {"workouts": self._data.recent_workouts}
 
 
 class LastSyncSensor(HealthSyncSensor):

@@ -1,10 +1,10 @@
 # HealthSync for Home Assistant
 
 Companion integration for the **HealthSync** iOS app. The app reads Apple
-Health data (steps, heart rate, HRV, sleep, active calories) and pushes it
-to Home Assistant; this integration receives those pushes on a webhook and
-exposes them as sensor entities. Local push only — no cloud, no polling,
-no external dependencies.
+Health data (steps, heart rate, HRV, sleep, active calories, workouts) and
+pushes it to Home Assistant; this integration receives those pushes on a
+webhook and exposes them as sensor entities. Local push only — no cloud, no
+polling, no external dependencies.
 
 ## Get the iOS app
 
@@ -18,6 +18,10 @@ above is this project specifically.
 
 ## Entities
 
+The integration creates two devices: **HealthSync** (steps, heart rate,
+HRV, sleep, sync status) and **HealthSync Workouts** (everything
+workout-related, listed as a related device on the HealthSync device page).
+
 | Entity | Meaning |
 |---|---|
 | Steps today | Steps accumulated since local midnight |
@@ -28,6 +32,17 @@ above is this project specifically.
 | Fell asleep | Local clock time the night's sleep began ("23:41"); full ISO datetime in the `timestamp` attribute |
 | Woke up | Local clock time the night's sleep ended ("07:12"); full ISO datetime in the `timestamp` attribute |
 | Last sync | When the last payload arrived from the app |
+
+**HealthSync Workouts** device:
+
+| Entity | Meaning |
+|---|---|
+| Last workout type | Activity of the most recent workout (e.g. "running"); start/end datetimes in `started_at`/`ended_at` attributes |
+| Last workout duration | Minutes, derived from the workout's start/end |
+| Last workout distance | Meters — null for workouts without a meaningful distance (yoga, strength training, ...) |
+| Last workout calories | Active energy burned (kcal) |
+| Recent workouts | State is a count; the last 10 workouts (type, start/end, duration, distance, calories) are in the `workouts` attribute — for history cards, templates, or catching up on anything missed |
+| Workout completed | Event entity — fires once per new workout with the same details as an attribute, so it shows in the Logbook and works as a clean automation trigger ("when a workout is completed...") |
 
 Every sample also fires a `healthsync_sample` event on the bus (raw payload,
 secret stripped) for your own automations; the app's Test Connection button
@@ -48,7 +63,9 @@ repository step needed.)
    the internet). Payloads without the correct secret are rejected with 401.
 3. After setup, a notification shows the generated webhook URL. Paste it
    into the HealthSync app (Settings → Home Assistant), and enter the same
-   secret there if you set one.
+   secret there if you set one. That URL already includes everything
+   needed — paste it whole, don't split it up. Leave "Shared secret" blank
+   unless you explicitly set one in step 2.
 4. Tap **Test Connection** in the app — you should get a "HealthSync test
    successful" notification in HA.
 

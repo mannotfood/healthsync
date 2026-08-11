@@ -29,17 +29,20 @@ from .const import (
     DOMAIN,
     EVENT_SAMPLE,
     EVENT_TEST,
+    MAX_RECENT_WORKOUTS,
     METRIC_HEART_RATE,
     METRIC_HRV,
     METRIC_SLEEP,
     METRIC_TEST,
+    METRIC_WORKOUTS,
     QUANTITY_METRICS,
     SIGNAL_UPDATE,
+    SIGNAL_WORKOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "event"]
 
 HealthSyncConfigEntry = ConfigEntry["HealthSyncData"]
 
@@ -70,6 +73,20 @@ class HealthSyncData:
     # Per-stage minutes last night (keys: asleepDeep/asleepREM/asleepCore/
     # awake/asleepUnspecified), from per-stage daily_total snapshots.
     sleep_stage_minutes: dict[str, float] = field(default_factory=dict)
+    # Most recent workout (added 11 Aug 2026). `duration` is derived from
+    # start/end rather than sent over the wire — the app doesn't send a
+    # separate duration field, same rationale as everywhere else here.
+    last_workout_type: str | None = None
+    last_workout_start: datetime | None = None
+    last_workout_end: datetime | None = None
+    last_workout_duration_min: float | None = None
+    last_workout_distance_m: float | None = None
+    last_workout_calories: float | None = None
+    # Bounded log of recent workouts, newest first (added for the "separate
+    # device + richer history" restructure, 11 Aug 2026). Dates are stored
+    # as ISO strings rather than datetimes so the list round-trips cleanly
+    # through the recorder/restore path as sensor attributes.
+    recent_workouts: list[dict] = field(default_factory=list)
     # Timestamp of the last received (valid) payload.
     last_sync: datetime | None = None
     # Recently seen sample keys, to drop replays: the app re-sends a whole
@@ -223,8 +240,12 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
                 continue
 
             data.last_sync = dt_util.utcnow()
-            _ingest_sample(hass, data, metric, sample)
+            new_workout = _ingest_sample(hass, data, metric, sample)
             hass.bus.async_fire(EVENT_SAMPLE, _event_payload(sample))
+            if new_workout is not None:
+                async_dispatcher_send(
+                    hass, SIGNAL_WORKOUT.format(entry_id=entry.entry_id), new_workout
+                )
             handled += 1
 
         if handled == 0 and samples:
@@ -247,8 +268,13 @@ def _ingest_sample(
     data: HealthSyncData,
     metric: str,
     payload: dict[str, Any],
-) -> None:
-    """Fold one sample into the runtime state."""
+) -> dict[str, Any] | None:
+    """Fold one sample into the runtime state.
+
+    Returns the new workout dict when this sample was a genuinely new
+    (in-order) workout, so the caller can fire SIGNAL_WORKOUT for the event
+    entity. None otherwise.
+    """
     start = _parse_date(payload.get("start_date"))
     end = _parse_date(payload.get("end_date"))
 
@@ -280,13 +306,46 @@ def _ingest_sample(
         data.sleep_end = end
         return
 
+    if metric == METRIC_WORKOUTS:
+        # Same out-of-order guard as heart rate/HRV below — batch retries can
+        # replay an older workout after a newer one has already landed.
+        if end and (previous := data.latest_end.get(metric)) and end < previous:
+            return None
+        value = payload.get("value")
+        workout_type = payload.get("workout_type")
+        duration_min = (end - start).total_seconds() / 60 if start and end else None
+        distance = payload.get("distance")
+        distance_m = float(distance) if isinstance(distance, (int, float)) else None
+        calories = float(value) if isinstance(value, (int, float)) else None
+
+        data.last_workout_type = workout_type
+        data.last_workout_start = start
+        data.last_workout_end = end
+        data.last_workout_duration_min = duration_min
+        data.last_workout_distance_m = distance_m
+        data.last_workout_calories = calories
+        if end:
+            data.latest_end[metric] = end
+
+        workout = {
+            "workout_type": workout_type,
+            "started_at": start.isoformat() if start else None,
+            "ended_at": end.isoformat() if end else None,
+            "duration_min": round(duration_min, 1) if duration_min is not None else None,
+            "distance_m": distance_m,
+            "calories": calories,
+        }
+        data.recent_workouts.insert(0, workout)
+        del data.recent_workouts[MAX_RECENT_WORKOUTS:]
+        return workout
+
     if metric not in QUANTITY_METRICS:
         _LOGGER.debug("HealthSync: ignoring unknown metric %r", metric)
-        return
+        return None
 
     value = payload.get("value")
     if not isinstance(value, (int, float)):
-        return
+        return None
 
     if metric in DAILY_TOTAL_METRICS:
         # State comes ONLY from daily-total snapshots ("daily_total": true),
@@ -298,14 +357,15 @@ def _ingest_sample(
         if payload.get("daily_total"):
             data.daily_totals[metric] = float(value)
             data.totals_date = dt_util.now().date().isoformat()
-        return
+        return None
 
     if metric in (METRIC_HEART_RATE, METRIC_HRV):
         if end and (previous := data.latest_end.get(metric)) and end < previous:
-            return
+            return None
         data.latest_values[metric] = float(value)
         if end:
             data.latest_end[metric] = end
+    return None
 
 
 def _parse_date(raw: Any) -> datetime | None:
