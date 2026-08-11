@@ -12,12 +12,9 @@ no external dependencies.
 automatic background syncing (manual sync is free forever, no subscription),
 local-first with no third-party servers.
 
-**App Store:** currently in review — this link will be added as soon as it's
-live. In the meantime, watch/star this repo for updates.
-
-> **Note:** several unrelated apps also named "HealthSync" already exist on
-> the App Store — none of them are this project. This app isn't published
-> yet; the real link will replace this note once it's live.
+**[Download on the App Store](https://apps.apple.com/app/healthsync-for-home-assistant/id6794884113)**
+— note there are several unrelated apps also named "HealthSync"; the link
+above is this project specifically.
 
 ## Entities
 
