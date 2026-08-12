@@ -17,12 +17,41 @@ METRIC_HRV = "heartRateVariability"
 METRIC_SLEEP = "sleep"
 METRIC_ACTIVE_CALORIES = "activeCalories"
 METRIC_WORKOUTS = "workouts"
+# Added 12 Aug 2026 — same wire format/ingestion pattern as the metrics
+# above, no special-casing needed beyond being listed in the right set below.
+METRIC_FLIGHTS_CLIMBED = "flightsClimbed"
+METRIC_EXERCISE_TIME = "exerciseTime"
+METRIC_RESTING_ENERGY = "restingEnergy"
+METRIC_DISTANCE = "distanceWalkingRunning"
+METRIC_VO2_MAX = "vo2Max"
+METRIC_WEIGHT = "weight"
 METRIC_TEST = "test_connection"
 
-QUANTITY_METRICS = {METRIC_STEPS, METRIC_HEART_RATE, METRIC_HRV, METRIC_ACTIVE_CALORIES}
+QUANTITY_METRICS = {
+    METRIC_STEPS,
+    METRIC_HEART_RATE,
+    METRIC_HRV,
+    METRIC_ACTIVE_CALORIES,
+    METRIC_FLIGHTS_CLIMBED,
+    METRIC_EXERCISE_TIME,
+    METRIC_RESTING_ENERGY,
+    METRIC_DISTANCE,
+    METRIC_VO2_MAX,
+    METRIC_WEIGHT,
+}
 # Metrics accumulated into a daily total (the app sends incremental samples,
 # not running totals).
-DAILY_TOTAL_METRICS = {METRIC_STEPS, METRIC_ACTIVE_CALORIES}
+DAILY_TOTAL_METRICS = {
+    METRIC_STEPS,
+    METRIC_ACTIVE_CALORIES,
+    METRIC_FLIGHTS_CLIMBED,
+    METRIC_EXERCISE_TIME,
+    METRIC_RESTING_ENERGY,
+    METRIC_DISTANCE,
+}
+# Metrics whose state is just "the most recent sample" (a discrete,
+# infrequent reading) rather than a running daily total.
+LATEST_VALUE_METRICS = {METRIC_HEART_RATE, METRIC_HRV, METRIC_VO2_MAX, METRIC_WEIGHT}
 
 SLEEP_STAGES = [
     "inBed",

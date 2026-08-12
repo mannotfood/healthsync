@@ -30,9 +30,8 @@ from .const import (
     DOMAIN,
     EVENT_SAMPLE,
     EVENT_TEST,
+    LATEST_VALUE_METRICS,
     MAX_RECENT_WORKOUTS,
-    METRIC_HEART_RATE,
-    METRIC_HRV,
     METRIC_SLEEP,
     METRIC_TEST,
     METRIC_WORKOUTS,
@@ -392,7 +391,7 @@ def _ingest_sample(
             data.totals_date = dt_util.now().date().isoformat()
         return None
 
-    if metric in (METRIC_HEART_RATE, METRIC_HRV):
+    if metric in LATEST_VALUE_METRICS:
         if end and (previous := data.latest_end.get(metric)) and end < previous:
             return None
         data.latest_values[metric] = float(value)

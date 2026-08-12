@@ -19,7 +19,8 @@ above is this project specifically.
 ## Entities
 
 The integration creates two devices: **HealthSync** (steps, heart rate,
-HRV, sleep, sync status) and **HealthSync Workouts** (everything
+HRV, sleep, flights climbed, exercise time, resting energy, distance, VO2
+max, weight, and sync status) and **HealthSync Workouts** (everything
 workout-related, listed as a related device on the HealthSync device page).
 
 | Entity | Meaning |
@@ -28,6 +29,12 @@ workout-related, listed as a related device on the HealthSync device page).
 | Active calories today | Active energy (kcal) since local midnight |
 | Heart rate | Most recent heart-rate sample (bpm) |
 | Heart rate variability | Most recent HRV SDNN sample (ms) |
+| Flights climbed today | Flights climbed since local midnight |
+| Exercise time today | Apple's "Exercise" minutes since local midnight |
+| Resting energy today | Basal/resting energy (kcal) since local midnight |
+| Walking + running distance today | Meters since local midnight — shown in km or mi to match your Home Assistant unit system |
+| VO2 max | Most recent VO2 max reading (mL/(kg·min)) |
+| Weight | Most recent weight sample — shown in kg or lb to match your Home Assistant unit system |
 | Sleep last night | Hours asleep over the last 24 hours; per-stage breakdown (`deep_minutes`, `rem_minutes`, `core_minutes`, `awake_minutes`) as attributes |
 | Fell asleep | Local clock time the night's sleep began ("23:41"); full ISO datetime in the `timestamp` attribute |
 | Woke up | Local clock time the night's sleep ended ("07:12"); full ISO datetime in the `timestamp` attribute |

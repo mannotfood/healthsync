@@ -24,9 +24,15 @@ from .const import (
     DOMAIN,
     MAX_RECENT_WORKOUTS,
     METRIC_ACTIVE_CALORIES,
+    METRIC_DISTANCE,
+    METRIC_EXERCISE_TIME,
+    METRIC_FLIGHTS_CLIMBED,
     METRIC_HEART_RATE,
     METRIC_HRV,
+    METRIC_RESTING_ENERGY,
     METRIC_STEPS,
+    METRIC_VO2_MAX,
+    METRIC_WEIGHT,
     SIGNAL_UPDATE,
     SIGNAL_WORKOUT,
 )
@@ -93,6 +99,29 @@ async def async_setup_entry(
             ),
             LatestValueSensor(
                 entry, data, METRIC_HRV, "Heart rate variability", "ms", "mdi:heart-flash"
+            ),
+            # Added 12 Aug 2026 — same generic DailyTotalSensor/
+            # LatestValueSensor classes as everything above, just more of
+            # them, now that the ingestion pipeline is fully metric-agnostic.
+            DailyTotalSensor(
+                entry, data, METRIC_FLIGHTS_CLIMBED, "Flights climbed today", "flights", "mdi:stairs"
+            ),
+            DailyTotalSensor(
+                entry, data, METRIC_EXERCISE_TIME, "Exercise time today", "min", "mdi:timer-outline",
+                device_class=SensorDeviceClass.DURATION,
+            ),
+            DailyTotalSensor(
+                entry, data, METRIC_RESTING_ENERGY, "Resting energy today", "kcal", "mdi:fire",
+                device_class=SensorDeviceClass.ENERGY,
+            ),
+            DailyTotalSensor(
+                entry, data, METRIC_DISTANCE, "Walking + running distance today", "m",
+                "mdi:map-marker-distance", device_class=SensorDeviceClass.DISTANCE,
+            ),
+            LatestValueSensor(entry, data, METRIC_VO2_MAX, "VO2 max", "mL/(kg·min)", "mdi:lungs"),
+            LatestValueSensor(
+                entry, data, METRIC_WEIGHT, "Weight", "kg", "mdi:scale-bathroom",
+                device_class=SensorDeviceClass.WEIGHT,
             ),
             SleepDurationSensor(entry, data),
             SleepTimestampSensor(entry, data, "onset", "Fell asleep", "mdi:weather-night"),
@@ -210,7 +239,8 @@ class HealthSyncWorkoutSensor(HealthSyncSensor):
 
 
 class DailyTotalSensor(HealthSyncSensor, RestoreSensor):
-    """Steps / active calories accumulated for the current local day."""
+    """Steps / active calories / flights climbed / exercise time / resting
+    energy / distance accumulated for the current local day."""
 
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
@@ -222,6 +252,7 @@ class DailyTotalSensor(HealthSyncSensor, RestoreSensor):
         name: str,
         unit: str,
         icon: str,
+        device_class: SensorDeviceClass | None = None,
     ) -> None:
         super().__init__(entry, data)
         self._metric = metric
@@ -229,6 +260,8 @@ class DailyTotalSensor(HealthSyncSensor, RestoreSensor):
         self._attr_native_unit_of_measurement = unit
         self._attr_icon = icon
         self._attr_unique_id = f"{entry.entry_id}_{metric}_today"
+        if device_class is not None:
+            self._attr_device_class = device_class
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -257,7 +290,7 @@ class DailyTotalSensor(HealthSyncSensor, RestoreSensor):
 
 
 class LatestValueSensor(HealthSyncSensor, RestoreSensor):
-    """Most recent heart rate / HRV sample."""
+    """Most recent heart rate / HRV / VO2 max / weight sample."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
 
@@ -269,6 +302,7 @@ class LatestValueSensor(HealthSyncSensor, RestoreSensor):
         name: str,
         unit: str,
         icon: str,
+        device_class: SensorDeviceClass | None = None,
     ) -> None:
         super().__init__(entry, data)
         self._metric = metric
@@ -276,6 +310,8 @@ class LatestValueSensor(HealthSyncSensor, RestoreSensor):
         self._attr_native_unit_of_measurement = unit
         self._attr_icon = icon
         self._attr_unique_id = f"{entry.entry_id}_{metric}"
+        if device_class is not None:
+            self._attr_device_class = device_class
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
