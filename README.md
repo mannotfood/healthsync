@@ -41,8 +41,8 @@ workout-related, listed as a related device on the HealthSync device page).
 | Last workout duration | Minutes, derived from the workout's start/end |
 | Last workout distance | Meters — null for workouts without a meaningful distance (yoga, strength training, ...) |
 | Last workout calories | Active energy burned (kcal) |
-| Recent workouts | State is a count; the last 10 workouts (type, start/end, duration, distance, calories) are in the `workouts` attribute — for history cards, templates, or catching up on anything missed |
-| Workout completed | Event entity — fires once per new workout with the same details as an attribute, so it shows in the Logbook and works as a clean automation trigger ("when a workout is completed...") |
+| Walking 11-08-2026 11:55 13.1 mi (×10) | Individual entities for your 10 most recent workouts, named after the workout itself (type, date/time, distance — distance shown in km or mi to match your Home Assistant unit system). Full detail (start/end, duration, distance, calories) in attributes. These appear one at a time as real workouts sync in, rather than all 10 existing upfront, and are never removed — older ones just get overwritten as newer workouts push them down |
+| Workout completed | Event entity — fires once per new workout with the same details as an attribute, so it shows in the Logbook and works as a clean automation trigger ("when a workout is completed..."). This is also where your **full, unlimited workout history** lives — every workout ever synced, not just the 10 above — browsable via Home Assistant's Logbook/History pages, filterable by type or date |
 
 Every sample also fires a `healthsync_sample` event on the bus (raw payload,
 secret stripped) for your own automations; the app's Test Connection button

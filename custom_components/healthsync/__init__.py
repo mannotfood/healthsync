@@ -84,10 +84,23 @@ class HealthSyncData:
     last_workout_distance_m: float | None = None
     last_workout_calories: float | None = None
     # Bounded log of recent workouts, newest first (added for the "separate
-    # device + richer history" restructure, 11 Aug 2026). Dates are stored
-    # as ISO strings rather than datetimes so the list round-trips cleanly
-    # through the recorder/restore path as sensor attributes.
-    recent_workouts: list[dict] = field(default_factory=list)
+    # device + richer history" restructure, 11 Aug 2026). Always exactly
+    # MAX_RECENT_WORKOUTS long, padded with None — the sensor platform maps
+    # each index onto a "slot" entity (added 12 Aug 2026, see sensor.py's
+    # WorkoutSlotSensor), so the list shape must stay stable. Dates are
+    # stored as ISO strings rather than datetimes so entries round-trip
+    # cleanly through the recorder/restore path as sensor attributes. This
+    # is only a device-page-visible shortlist — the unbounded, all-time
+    # history of every workout already lives permanently in HA's
+    # Logbook/History via the "Workout completed" event entity.
+    recent_workouts: list[dict | None] = field(
+        default_factory=lambda: [None] * MAX_RECENT_WORKOUTS
+    )
+    # How many WorkoutSlotSensor entities have been created so far (added
+    # 12 Aug 2026). Slots are created progressively as real workouts arrive
+    # rather than all MAX_RECENT_WORKOUTS at once, and are never removed —
+    # this just tracks how far that progressive creation has gotten.
+    workout_slots_created: int = 0
     # Timestamp of the last received (valid) payload.
     last_sync: datetime | None = None
     # Recently seen sample keys, to drop replays: the app re-sends a whole
@@ -352,8 +365,11 @@ def _ingest_sample(
             "distance_m": distance_m,
             "calories": calories,
         }
-        data.recent_workouts.insert(0, workout)
-        del data.recent_workouts[MAX_RECENT_WORKOUTS:]
+        # Fixed-size (always exactly MAX_RECENT_WORKOUTS long, padded with
+        # None) rather than a growable list — the sensor platform maps each
+        # index straight onto a "slot" entity, so the list shape must stay
+        # stable for that to work.
+        data.recent_workouts = [workout, *data.recent_workouts[: MAX_RECENT_WORKOUTS - 1]]
         return workout
 
     if metric not in QUANTITY_METRICS:

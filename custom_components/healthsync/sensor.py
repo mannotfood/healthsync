@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -10,6 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
+from homeassistant.const import UnitOfLength
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
@@ -20,12 +22,42 @@ from homeassistant.util import dt as dt_util
 from . import HealthSyncConfigEntry, HealthSyncData
 from .const import (
     DOMAIN,
+    MAX_RECENT_WORKOUTS,
     METRIC_ACTIVE_CALORIES,
     METRIC_HEART_RATE,
     METRIC_HRV,
     METRIC_STEPS,
     SIGNAL_UPDATE,
+    SIGNAL_WORKOUT,
 )
+
+_CAMEL_SPLIT = re.compile(r"(?<!^)(?=[A-Z])")
+
+
+def _title_case_workout_type(raw: str) -> str:
+    """"crossTraining" -> "Cross Training". HealthKit's raw type strings
+    are camelCase; HA display strings should read like normal English."""
+    return _CAMEL_SPLIT.sub(" ", raw).title()
+
+
+def _workout_label(hass: HomeAssistant, workout: dict[str, Any]) -> str:
+    """Build a human name for a workout, e.g. "Walking 11-08-2026 11:55
+    13.1 mi" (added 12 Aug 2026, replacing plain "Workout 3"-style slot
+    names) — so each entity reads as what it actually is at a glance.
+    Distance is converted via HA's own unit system setting (Settings ->
+    General -> Unit system), so it shows km or mi to match the user's
+    configured preference rather than always meters.
+    """
+    kind = _title_case_workout_type(workout.get("workout_type") or "Workout")
+    started = dt_util.parse_datetime(workout.get("started_at") or "")
+    when = dt_util.as_local(started).strftime("%d-%m-%Y %H:%M") if started else ""
+    distance_m = workout.get("distance_m")
+    distance = ""
+    if isinstance(distance_m, (int, float)):
+        converted = hass.config.units.length(distance_m, UnitOfLength.METERS)
+        distance = f" {converted:.1f} {hass.config.units.length_unit}"
+    label = " ".join(p for p in (kind, when) if p)
+    return f"{label}{distance}".strip()
 
 
 async def async_setup_entry(
@@ -38,11 +70,17 @@ async def async_setup_entry(
 
     # The "Sleep stage" sensor was removed in 0.6.0 (a latest-stage value is
     # frozen at whatever the user woke from — the per-stage breakdown lives
-    # as attributes on "Sleep last night" now). Clean up the old entity.
+    # as attributes on "Sleep last night" now). "Recent workouts" was
+    # removed in 0.11.0, replaced by the WorkoutSlotSensor entities below.
+    # Clean up both old entities.
     registry = er.async_get(hass)
-    stale = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_sleep_stage")
-    if stale:
-        registry.async_remove(stale)
+    for old_unique_id in (
+        f"{entry.entry_id}_sleep_stage",
+        f"{entry.entry_id}_recent_workouts",
+    ):
+        stale = registry.async_get_entity_id("sensor", DOMAIN, old_unique_id)
+        if stale:
+            registry.async_remove(stale)
 
     async_add_entities(
         [
@@ -63,9 +101,44 @@ async def async_setup_entry(
             WorkoutDurationSensor(entry, data),
             WorkoutDistanceSensor(entry, data),
             WorkoutCaloriesSensor(entry, data),
-            RecentWorkoutsSensor(entry, data),
             LastSyncSensor(entry, data),
         ]
+    )
+
+    # Recent-workout slots (added 12 Aug 2026, replacing the old single
+    # "Recent workouts" list-attribute sensor — its detail was buried in an
+    # attribute with no per-workout UI). These grow one entity at a time as
+    # real workouts arrive, up to MAX_RECENT_WORKOUTS, rather than being
+    # pre-created empty. Once created a slot is never removed; its value and
+    # name just get overwritten as newer workouts push older ones down —
+    # same pattern the "last workout" sensors have always used. On restart,
+    # re-add whichever slots already existed from a previous run first (each
+    # restores its own data via RestoreSensor); only new workouts beyond
+    # that create further slots. The unbounded, all-time history of every
+    # workout ever synced already lives permanently in HA's Logbook/History
+    # via the "Workout completed" event entity, so nothing above the cap is
+    # ever lost — these slots are just a device-page-visible shortlist.
+    existing_slots = sorted(
+        int(e.unique_id.rsplit("_", 1)[-1])
+        for e in er.async_entries_for_config_entry(registry, entry.entry_id)
+        if e.unique_id.startswith(f"{entry.entry_id}_workout_slot_")
+    )
+    if existing_slots:
+        async_add_entities(WorkoutSlotSensor(entry, data, slot) for slot in existing_slots)
+    data.workout_slots_created = len(existing_slots)
+
+    @callback
+    def _maybe_add_workout_slot(_workout: dict[str, Any]) -> None:
+        filled = sum(1 for w in data.recent_workouts if w is not None)
+        if filled > data.workout_slots_created:
+            new_slot = data.workout_slots_created
+            data.workout_slots_created += 1
+            async_add_entities([WorkoutSlotSensor(entry, data, new_slot)])
+
+    entry.async_on_unload(
+        async_dispatcher_connect(
+            hass, SIGNAL_WORKOUT.format(entry_id=entry.entry_id), _maybe_add_workout_slot
+        )
     )
 
 
@@ -456,41 +529,61 @@ class WorkoutCaloriesSensor(HealthSyncWorkoutSensor, RestoreSensor):
         return round(value, 1) if value is not None else None
 
 
-class RecentWorkoutsSensor(HealthSyncWorkoutSensor, RestoreSensor):
-    """Rolling log of recent workouts (added 11 Aug 2026).
+class WorkoutSlotSensor(HealthSyncWorkoutSensor, RestoreSensor):
+    """One of up to MAX_RECENT_WORKOUTS individually-browsable recent-workout
+    entities (added 12 Aug 2026, replacing the old single "Recent workouts"
+    list-attribute sensor). Slot 0 is the most recent workout, slot 1 the
+    one before that, etc. Slots are created progressively — see
+    `async_setup_entry` — rather than all MAX_RECENT_WORKOUTS existing from
+    the start.
 
-    State is just a count so it reads sensibly on a dashboard; the actual
-    log — up to MAX_RECENT_WORKOUTS entries, newest first, each with
-    workout_type/started_at/ended_at/duration_min/distance_m/calories —
-    lives in the `workouts` attribute for templates, history cards, or
-    automations that want more than "the latest one".
+    Named after the workout itself (e.g. "Walking 11-08-2026 11:55 13.1 mi")
+    rather than "Workout 3": `name` is a live property, recomputed on every
+    dispatcher-driven state write, so as newer workouts shift into this slot
+    the displayed name updates to match — same as the state and attributes.
     """
 
-    _attr_icon = "mdi:history"
-    _attr_name = "Recent workouts"
+    _attr_icon = "mdi:run"
 
-    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
+    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData, slot: int) -> None:
         super().__init__(entry, data)
-        self._attr_unique_id = f"{entry.entry_id}_recent_workouts"
+        self._slot = slot
+        self._attr_unique_id = f"{entry.entry_id}_workout_slot_{slot}"
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        if self._data.recent_workouts:
+        if self._data.recent_workouts[self._slot] is not None:
             return
         last_state = await self.async_get_last_state()
-        if last_state is None:
+        if last_state is None or last_state.state in (None, "unknown", "unavailable"):
             return
-        restored = last_state.attributes.get("workouts")
-        if isinstance(restored, list):
-            self._data.recent_workouts = [w for w in restored if isinstance(w, dict)]
+        self._data.recent_workouts[self._slot] = {
+            "workout_type": last_state.state,
+            "started_at": last_state.attributes.get("started_at"),
+            "ended_at": last_state.attributes.get("ended_at"),
+            "duration_min": last_state.attributes.get("duration_min"),
+            "distance_m": last_state.attributes.get("distance_m"),
+            "calories": last_state.attributes.get("calories"),
+        }
 
     @property
-    def native_value(self) -> int:
-        return len(self._data.recent_workouts)
+    def name(self) -> str:
+        workout = self._data.recent_workouts[self._slot]
+        if not workout:
+            return f"Workout {self._slot + 1}"
+        return _workout_label(self.hass, workout)
+
+    @property
+    def native_value(self) -> str | None:
+        workout = self._data.recent_workouts[self._slot]
+        return workout["workout_type"] if workout else None
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"workouts": self._data.recent_workouts}
+        workout = self._data.recent_workouts[self._slot]
+        if not workout:
+            return {}
+        return {k: v for k, v in workout.items() if k != "workout_type"}
 
 
 class LastSyncSensor(HealthSyncSensor):
