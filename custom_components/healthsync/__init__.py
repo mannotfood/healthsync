@@ -23,6 +23,7 @@ from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_NAME,
     CONF_SECRET,
     CONF_WEBHOOK_ID,
     DAILY_TOTAL_METRICS,
@@ -115,7 +116,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: HealthSyncConfigEntry) -
     webhook.async_register(
         hass,
         DOMAIN,
-        "HealthSync",
+        entry.title,
         webhook_id,
         _make_webhook_handler(entry),
         allowed_methods=["POST"],
@@ -149,16 +150,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: HealthSyncConfigEntry) -
     if webhook_url is None:
         webhook_url = webhook.async_generate_url(hass, webhook_id, prefer_external=True)
 
+    person_name = entry.data.get(CONF_NAME)
+    target_phrase = f"on {person_name}'s phone" if person_name else "on your phone"
     persistent_notification.async_create(
         hass,
         (
-            "Paste this webhook URL into the HealthSync app "
+            f"Paste this webhook URL into the HealthSync app {target_phrase} "
             f"(Settings → Home Assistant):\n\n`{webhook_url}`"
             "\n\nNote: iOS requires https for remote addresses. Plain http is "
             "fine for local network and VPN/tunnel IP addresses "
             "(e.g. 192.168.x.x or a Tailscale 100.x address)."
         ),
-        title="HealthSync webhook ready",
+        title=f"{entry.title} webhook ready",
         notification_id=f"{DOMAIN}_{entry.entry_id}",
     )
 

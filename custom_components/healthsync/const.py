@@ -4,6 +4,11 @@ DOMAIN = "healthsync"
 
 CONF_WEBHOOK_ID = "webhook_id"
 CONF_SECRET = "secret"
+# Optional per-entry label (added 11 Aug 2026 to support more than one
+# person — e.g. a family, each with their own phone/webhook — under the
+# same HA instance). Folded straight into the config entry's title rather
+# than stored separately; device names are derived from entry.title.
+CONF_NAME = "name"
 
 # Metric names as sent by the iOS app (HealthMetricType raw values).
 METRIC_STEPS = "steps"

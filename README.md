@@ -59,8 +59,9 @@ repository step needed.)
 ## Setup
 
 1. Settings → Devices & Services → Add Integration → **HealthSync**.
-2. Optionally set a shared secret (recommended if your HA is reachable from
-   the internet). Payloads without the correct secret are rejected with 401.
+2. Optionally give this entry a name (e.g. "Dad") and/or set a shared secret
+   (recommended if your HA is reachable from the internet). Payloads without
+   the correct secret are rejected with 401.
 3. After setup, a notification shows the generated webhook URL. Paste it
    into the HealthSync app (Settings → Home Assistant), and enter the same
    secret there if you set one. That URL already includes everything
@@ -68,6 +69,15 @@ repository step needed.)
    unless you explicitly set one in step 2.
 4. Tap **Test Connection** in the app — you should get a "HealthSync test
    successful" notification in HA.
+
+### More than one person
+
+Add HealthSync again (Settings → Devices & Services → Add Integration →
+**HealthSync**) once per person — each entry gets its own webhook URL, so
+everyone points their own phone at their own URL. Name each entry (step 2
+above) so the devices are distinguishable — e.g. "HealthSync (Dad)" and
+"HealthSync (Dad) Workouts" rather than several identically-named
+"HealthSync" devices.
 
 ## Notes
 

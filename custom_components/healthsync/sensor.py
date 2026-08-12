@@ -70,9 +70,14 @@ async def async_setup_entry(
 
 
 def _main_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
+    # Device name comes straight from the config entry's title (plain
+    # "HealthSync" unless the user gave this entry a name at setup, e.g.
+    # "HealthSync (Dad)") — added 11 Aug 2026 so multiple entries (a family,
+    # each with their own webhook) show up as distinguishable devices
+    # instead of several identically-named "HealthSync" entries.
     return DeviceInfo(
         identifiers={(DOMAIN, entry.entry_id)},
-        name="HealthSync",
+        name=entry.title,
         manufacturer="HealthSync",
         model="Apple Health bridge",
         entry_type=DeviceEntryType.SERVICE,
@@ -88,7 +93,7 @@ def workout_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
     """
     return DeviceInfo(
         identifiers={(DOMAIN, f"{entry.entry_id}_workouts")},
-        name="HealthSync Workouts",
+        name=f"{entry.title} Workouts",
         manufacturer="HealthSync",
         model="Apple Health bridge",
         entry_type=DeviceEntryType.SERVICE,
