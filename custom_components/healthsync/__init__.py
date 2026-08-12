@@ -310,10 +310,23 @@ def _ingest_sample(
         return
 
     if metric == METRIC_WORKOUTS:
-        # Same out-of-order guard as heart rate/HRV below — batch retries can
-        # replay an older workout after a newer one has already landed.
-        if end and (previous := data.latest_end.get(metric)) and end < previous:
-            return None
+        # Whether this is the newest workout seen so far governs the "last
+        # workout" *snapshot* fields only — it must NOT gate whether the
+        # workout gets recorded at all. A normal incremental sync only ever
+        # delivers one or two workouts, roughly in order, so the two things
+        # were previously conflated (an out-of-order arrival just returned
+        # early). But "Sync All Workout History" delivers dozens/hundreds of
+        # workouts in one batch, in whatever order HealthKit's anchored
+        # query happens to return them — NOT guaranteed chronological — so
+        # treating "older than the last-processed one" as "reject entirely"
+        # silently dropped almost everything except whichever workout
+        # happened to be processed first (e.g. 40 synced from the app, only
+        # 1 landing in HA). Every workout that reaches here already passed
+        # the replay-dedup check in the webhook handler, so it's always
+        # legitimate to log it — only the scalar "latest" fields need the
+        # ordering guard.
+        is_newest = not (end and (previous := data.latest_end.get(metric)) and end < previous)
+
         value = payload.get("value")
         workout_type = payload.get("workout_type")
         duration_min = (end - start).total_seconds() / 60 if start and end else None
@@ -321,14 +334,15 @@ def _ingest_sample(
         distance_m = float(distance) if isinstance(distance, (int, float)) else None
         calories = float(value) if isinstance(value, (int, float)) else None
 
-        data.last_workout_type = workout_type
-        data.last_workout_start = start
-        data.last_workout_end = end
-        data.last_workout_duration_min = duration_min
-        data.last_workout_distance_m = distance_m
-        data.last_workout_calories = calories
-        if end:
-            data.latest_end[metric] = end
+        if is_newest:
+            data.last_workout_type = workout_type
+            data.last_workout_start = start
+            data.last_workout_end = end
+            data.last_workout_duration_min = duration_min
+            data.last_workout_distance_m = distance_m
+            data.last_workout_calories = calories
+            if end:
+                data.latest_end[metric] = end
 
         workout = {
             "workout_type": workout_type,
