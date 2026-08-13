@@ -1,0 +1,48 @@
+get_readings:
+  name: Get readings
+  description: >-
+    Returns every individual reading HealthSync has archived for one metric,
+    exactly as Apple Health produced it — the real value and Apple's own
+    timestamp for each one, with no averaging, rounding, or bucketing.
+    Optionally limited to a date range.
+  fields:
+    device_id:
+      name: Device
+      description: >-
+        The HealthSync (or HealthSync Workouts) device to query — either
+        resolves to the same person's data.
+      required: true
+      selector:
+        device:
+          integration: healthsync
+    metric:
+      name: Metric
+      description: Which metric to return readings for.
+      required: true
+      selector:
+        select:
+          options:
+            - steps
+            - heartRate
+            - heartRateVariability
+            - sleep
+            - activeCalories
+            - workouts
+            - flightsClimbed
+            - exerciseTime
+            - restingEnergy
+            - distanceWalkingRunning
+            - vo2Max
+            - weight
+    start:
+      name: Start
+      description: Only include readings at or after this time.
+      required: false
+      selector:
+        datetime:
+    end:
+      name: End
+      description: Only include readings at or before this time.
+      required: false
+      selector:
+        datetime:

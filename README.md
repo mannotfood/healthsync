@@ -35,6 +35,7 @@ workout-related, listed as a related device on the HealthSync device page).
 | Walking + running distance today | Meters since local midnight — shown in km or mi to match your Home Assistant unit system |
 | VO2 max | Most recent VO2 max reading (mL/(kg·min)) |
 | Weight | Most recent weight sample — shown in kg or lb to match your Home Assistant unit system |
+| Heart rate reading / Heart rate variability reading / VO2 max reading / Weight reading | Event entities — fire once per *individual* reading, regardless of how many arrive in the same sync. The "current value" sensors above only ever reflect whichever reading happened to be last in a batch; these guarantee every reading's exact value + Apple's own timestamp is genuinely recorded (value/unit/start_date/end_date attributes) — zero rounding or averaging, even for readings a batch would otherwise have silently overwritten. Shows a readable Logbook line (e.g. "Heart rate reading recorded 84 bpm"), and is fully queryable via History/Logbook, automations, or exports. Not a graphable History *line chart* the way a regular sensor is, though — this is the exact record, not the visual one |
 | Sleep last night | Hours asleep over the last 24 hours; per-stage breakdown (`deep_minutes`, `rem_minutes`, `core_minutes`, `awake_minutes`) as attributes |
 | Fell asleep | Local clock time the night's sleep began ("23:41"); full ISO datetime in the `timestamp` attribute |
 | Woke up | Local clock time the night's sleep ended ("07:12"); full ISO datetime in the `timestamp` attribute |
@@ -76,6 +77,31 @@ Swap the entity for HRV, VO2 max, or weight as needed (adjust `-` naming
 to match your actual entity IDs, and add `(Name)` suffixes if you've set
 up more than one family member).
 
+### Reducing Logbook noise
+
+A couple of entities update often enough that they can dominate the
+Logbook feed — notably **Last sync** (fires on every sync) and the four
+**reading** event entities above (heart rate especially can fire many
+times an hour; each shows a readable line like "Heart rate reading
+recorded 84 bpm", but volume alone can still feel busy). This is purely
+about Logbook clutter — it doesn't affect their recorded data, History, or
+any automations either way. If you'd rather quiet them down, exclude them
+in `configuration.yaml`:
+
+```yaml
+logbook:
+  exclude:
+    entities:
+      - sensor.healthsync_last_sync
+      - event.healthsync_heart_rate_reading
+      - event.healthsync_heart_rate_variability_reading
+      - event.healthsync_vo2_max_reading
+      - event.healthsync_weight_reading
+```
+
+(Adjust entity IDs to match your actual ones, especially if you've set up
+more than one family member.)
+
 **HealthSync Workouts** device:
 
 | Entity | Meaning |
@@ -90,6 +116,36 @@ up more than one family member).
 Every sample also fires a `healthsync_sample` event on the bus (raw payload,
 secret stripped) for your own automations; the app's Test Connection button
 fires `healthsync_test` and a confirmation notification.
+
+### Complete, unaveraged history — every reading, every metric
+
+Every sample the app sends — not just heart rate/HRV/VO2 max/weight, all
+twelve metrics — is separately archived exactly as Apple Health produced it:
+the real value and Apple's own timestamp, never rounded, averaged, or
+bucketed into anything coarser. This lives in its own small database
+alongside the rest of Home Assistant's storage (so it's included in HA
+backups automatically), independent of the entities and statistics above —
+those exist to give you a live dashboard value and an hourly graph; this is
+the underlying exact record, kept in full regardless of what the entities
+show.
+
+Query it with the **`healthsync.get_readings`** action (Developer Tools →
+Actions, or from an automation/template):
+
+```yaml
+action: healthsync.get_readings
+data:
+  device_id: <your HealthSync device>
+  metric: heartRate
+  start: "2026-08-01T00:00:00"
+  end: "2026-08-13T00:00:00"
+```
+
+`start`/`end` are optional — omit both for the full history. Returns a list
+of readings (value, unit, exact start/end timestamps, source, and a few
+metric-specific fields like `sleep_stage` or `distance` where relevant).
+Handy for a custom chart card (e.g. ApexCharts) or your own export/analysis,
+without being limited to HA's hourly-statistics resolution.
 
 ## Install
 

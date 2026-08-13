@@ -13,15 +13,18 @@ from datetime import datetime, timedelta
 from http import HTTPStatus
 from typing import TYPE_CHECKING, Any
 
+import voluptuous as vol
 from aiohttp import web
 
 from homeassistant.components import cloud, persistent_notification, webhook
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers import entity_registry as er
+from homeassistant.core import HomeAssistant, ServiceCall, ServiceResponse, SupportsResponse, callback
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv, device_registry as dr, entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.helpers.storage import Store
+from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
@@ -43,11 +46,13 @@ except ImportError:
     _STATISTICS_AVAILABLE = False
 
 from .const import (
+    ALL_READING_METRICS,
     CONF_NAME,
     CONF_SECRET,
     CONF_WEBHOOK_ID,
     DAILY_TOTAL_METRICS,
     DOMAIN,
+    EVENT_METRIC_READING,
     EVENT_SAMPLE,
     EVENT_TEST,
     LATEST_VALUE_METRICS,
@@ -57,9 +62,12 @@ from .const import (
     METRIC_WORKOUTS,
     OPT_WEBHOOK_NOTIFIED,
     QUANTITY_METRICS,
+    SERVICE_GET_READINGS,
+    SIGNAL_METRIC_READING,
     SIGNAL_UPDATE,
     SIGNAL_WORKOUT,
 )
+from .db import ReadingsStore
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -155,6 +163,10 @@ class HealthSyncData:
     # needed the way `seen` has one.
     seen_workout_keys: set[str] = field(default_factory=set)
     workout_store: Any = field(default=None, repr=False)
+    # Complete, unaveraged archive of every sample this entry has ever
+    # received (added 13 Aug 2026) — see db.py for why this exists and
+    # SERVICE_GET_READINGS below for how it's queried.
+    readings_store: Any = field(default=None, repr=False)
 
     def mark_seen(self, key: tuple, max_entries: int = 5000) -> bool:
         """Record a sample key; returns False if it was already seen."""
@@ -168,6 +180,59 @@ class HealthSyncData:
         return True
 
 
+GET_READINGS_SCHEMA = vol.Schema(
+    {
+        vol.Required("device_id"): cv.string,
+        vol.Required("metric"): vol.In(ALL_READING_METRICS),
+        vol.Optional("start"): cv.datetime,
+        vol.Optional("end"): cv.datetime,
+    }
+)
+
+
+async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    """Register healthsync.get_readings once for the whole domain.
+
+    Deliberately a module-level async_setup rather than something registered
+    inside async_setup_entry — this integration supports more than one
+    config entry (one per family member), and a single shared service that
+    resolves *which* entry to query from the device_id argument is simpler
+    and more correct than N duplicate per-entry registrations racing to
+    (re)register the same service name.
+    """
+
+    async def _async_handle_get_readings(call: ServiceCall) -> ServiceResponse:
+        device_id = call.data["device_id"]
+        metric = call.data["metric"]
+        start = call.data.get("start")
+        end = call.data.get("end")
+
+        device = dr.async_get(hass).async_get(device_id)
+        if device is None:
+            raise ServiceValidationError(f"Unknown device: {device_id}")
+
+        entry_id = next(iter(device.config_entries), None)
+        entry = hass.config_entries.async_get_entry(entry_id) if entry_id else None
+        if entry is None or entry.domain != DOMAIN:
+            raise ServiceValidationError("That device isn't a HealthSync device")
+
+        store: ReadingsStore | None = entry.runtime_data.readings_store
+        if store is None:
+            raise ServiceValidationError("HealthSync hasn't finished starting up yet — try again shortly")
+
+        readings = await store.async_query(metric, start, end)
+        return {"readings": readings, "count": len(readings)}
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_READINGS,
+        _async_handle_get_readings,
+        schema=GET_READINGS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    return True
+
+
 async def async_setup_entry(hass: HomeAssistant, entry: HealthSyncConfigEntry) -> bool:
     """Set up HealthSync from a config entry."""
     # Load the persisted seen-workout dedup set before anything else can
@@ -178,6 +243,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: HealthSyncConfigEntry) -
     data = HealthSyncData(totals_date=dt_util.now().date().isoformat())
     data.seen_workout_keys = set(saved_workout_keys) if saved_workout_keys else set()
     data.workout_store = workout_store
+
+    readings_store = ReadingsStore(hass, entry.entry_id)
+    await readings_store.async_setup()
+    data.readings_store = readings_store
+
     entry.runtime_data = data
 
     webhook_id = entry.data[CONF_WEBHOOK_ID]
@@ -343,6 +413,11 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
 
             data.last_sync = dt_util.utcnow()
             new_workout = _ingest_sample(hass, data, metric, sample)
+            if data.readings_store is not None:
+                # Archived exactly as received, for every metric — not just
+                # the four latest-value ones the event entities above cover.
+                # This is the complete, unaveraged record; see db.py.
+                await data.readings_store.async_insert(metric, sample)
             if metric in LATEST_VALUE_METRICS:
                 # Independent of _ingest_sample's out-of-order guard (which
                 # only protects the *live* "current value" sensor) — every
@@ -352,6 +427,41 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
                 raw_value = sample.get("value")
                 if sample_end and isinstance(raw_value, (int, float)):
                     _import_hourly_statistic(hass, data, entry, metric, sample_end, float(raw_value))
+                # Per-sample event so every individual reading is genuinely
+                # preserved, not just whichever one happens to be last when
+                # several arrive in one batch (SIGNAL_UPDATE — which drives
+                # the "current value" sensor — only fires once per whole
+                # webhook POST). Not visible as a graphable History line
+                # (event entities aren't), but the exact value + Apple's own
+                # timestamp for every reading is genuinely recorded and
+                # queryable, same guarantee workouts already had.
+                async_dispatcher_send(
+                    hass,
+                    SIGNAL_METRIC_READING.format(entry_id=entry.entry_id),
+                    metric,
+                    sample,
+                )
+                # Also fired as a genuine bus event (distinct from the
+                # dispatcher signal above, which only drives the entity's own
+                # state) — this is what logbook.py's describer hooks into to
+                # give each reading a readable Logbook line. HA's Logbook
+                # describer system only applies to real bus events, not to
+                # entity-domain state changes, so the event entity alone
+                # can't get custom Logbook text — confirmed against HA
+                # core's own source (no event/logbook.py exists, and
+                # EXPOSED_STATE_ATTRIBUTES for state-change rows is
+                # hardcoded to just `event_type`, nothing else).
+                hass.bus.async_fire(
+                    EVENT_METRIC_READING,
+                    {
+                        "entry_id": entry.entry_id,
+                        "metric": metric,
+                        "value": sample.get("value"),
+                        "unit": sample.get("unit"),
+                        "start_date": sample.get("start_date"),
+                        "end_date": sample.get("end_date"),
+                    },
+                )
             hass.bus.async_fire(EVENT_SAMPLE, _event_payload(sample))
             if new_workout is not None:
                 async_dispatcher_send(

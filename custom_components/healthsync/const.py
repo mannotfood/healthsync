@@ -72,6 +72,12 @@ SLEEP_STAGES = [
 
 EVENT_SAMPLE = "healthsync_sample"
 EVENT_TEST = "healthsync_test"
+# Distinct from EVENT_SAMPLE (which fires for *every* metric, including
+# high-volume ones like steps, and has no Logbook describer registered —
+# deliberately silent there) — this one is scoped to just the four
+# latest-value metrics specifically so its logbook.py describer only ever
+# affects those, not the rest of the integration's Logbook behaviour.
+EVENT_METRIC_READING = "healthsync_metric_reading"
 
 SIGNAL_UPDATE = "healthsync_update_{entry_id}"
 # Fired only when a genuinely new (non-replayed, in-order) workout lands —
@@ -79,8 +85,28 @@ SIGNAL_UPDATE = "healthsync_update_{entry_id}"
 # every unrelated sample (steps, heart rate, ...).
 SIGNAL_WORKOUT = "healthsync_workout_{entry_id}"
 
+# Fired once per individual latest-value sample (heart rate, HRV, VO2 max,
+# weight) as it's processed — added 13 Aug 2026 so every reading gets its own
+# recorded event, not just whichever one happens to be last when a batch of
+# several arrives in one webhook call. SIGNAL_UPDATE only fires once per
+# whole webhook POST, so the "current value" sensor it drives can only ever
+# reflect the batch's final reading — real per-reading data (accurate value
+# + Apple's own timestamp for each one) needs this separate, per-sample
+# signal instead.
+SIGNAL_METRIC_READING = "healthsync_metric_reading_{entry_id}"
+
 # How many recent workouts the "Recent workouts" sensor keeps as attributes.
 MAX_RECENT_WORKOUTS = 10
+
+# healthsync.get_readings — returns every individual reading archived in a
+# config entry's ReadingsStore (db.py) for one metric, exactly as received,
+# optionally bounded to a date range. Registered once for the whole domain
+# (see async_setup in __init__.py), not per config entry.
+SERVICE_GET_READINGS = "get_readings"
+# Every metric a reading can legitimately be archived under — built from the
+# same sets the rest of the integration already uses, so this can't drift
+# out of sync with what _ingest_sample actually accepts.
+ALL_READING_METRICS = sorted(QUANTITY_METRICS | {METRIC_SLEEP, METRIC_WORKOUTS})
 
 # Mirrors the iOS app's WorkoutType.swift raw values exactly (including
 # "other", its own fallback case) — the closed set of event_types the

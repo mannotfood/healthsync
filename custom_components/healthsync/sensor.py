@@ -172,7 +172,7 @@ async def async_setup_entry(
     )
 
 
-def _main_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
+def main_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
     # Device name comes straight from the config entry's title (plain
     # "HealthSync" unless the user gave this entry a name at setup, e.g.
     # "HealthSync (Dad)") — added 11 Aug 2026 so multiple entries (a family,
@@ -213,7 +213,7 @@ class HealthSyncSensor(SensorEntity):
     def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
         self._data = data
         self._entry = entry
-        self._attr_device_info = _main_device_info(entry)
+        self._attr_device_info = main_device_info(entry)
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
