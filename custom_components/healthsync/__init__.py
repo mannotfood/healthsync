@@ -55,6 +55,7 @@ from .const import (
     METRIC_SLEEP,
     METRIC_TEST,
     METRIC_WORKOUTS,
+    OPT_WEBHOOK_NOTIFIED,
     QUANTITY_METRICS,
     SIGNAL_UPDATE,
     SIGNAL_WORKOUT,
@@ -217,20 +218,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: HealthSyncConfigEntry) -
     if webhook_url is None:
         webhook_url = webhook.async_generate_url(hass, webhook_id, prefer_external=True)
 
-    person_name = entry.data.get(CONF_NAME)
-    target_phrase = f"on {person_name}'s phone" if person_name else "on your phone"
-    persistent_notification.async_create(
-        hass,
-        (
-            f"Paste this webhook URL into the HealthSync app {target_phrase} "
-            f"(Settings → Home Assistant):\n\n`{webhook_url}`"
-            "\n\nNote: iOS requires https for remote addresses. Plain http is "
-            "fine for local network and VPN/tunnel IP addresses "
-            "(e.g. 192.168.x.x or a Tailscale 100.x address)."
-        ),
-        title=f"{entry.title} webhook ready",
-        notification_id=f"{DOMAIN}_{entry.entry_id}",
-    )
+    # Only ever shown once per entry — async_setup_entry runs on every HA
+    # restart (and this integration gets restarted a lot, since every
+    # update needs one), not just the first-ever setup. Without this guard,
+    # the notification came back every restart even after being dismissed,
+    # which is what this whole block exists to fix. A genuine re-add
+    # (delete + re-create the entry) gets a fresh entry.entry_id, so it
+    # correctly shows again then — that IS a new webhook URL.
+    if not entry.options.get(OPT_WEBHOOK_NOTIFIED):
+        person_name = entry.data.get(CONF_NAME)
+        target_phrase = f"on {person_name}'s phone" if person_name else "on your phone"
+        persistent_notification.async_create(
+            hass,
+            (
+                f"Paste this webhook URL into the HealthSync app {target_phrase} "
+                f"(Settings → Home Assistant):\n\n`{webhook_url}`"
+                "\n\nNote: iOS requires https for remote addresses. Plain http is "
+                "fine for local network and VPN/tunnel IP addresses "
+                "(e.g. 192.168.x.x or a Tailscale 100.x address)."
+            ),
+            title=f"{entry.title} webhook ready",
+            notification_id=f"{DOMAIN}_{entry.entry_id}",
+        )
+        hass.config_entries.async_update_entry(
+            entry, options={**entry.options, OPT_WEBHOOK_NOTIFIED: True}
+        )
 
     return True
 

@@ -10,6 +10,14 @@ CONF_SECRET = "secret"
 # than stored separately; device names are derived from entry.title.
 CONF_NAME = "name"
 
+# entry.options flag: has the one-time "paste this webhook URL into the app"
+# notification already been shown for this entry? Lives in options rather
+# than data since it's internal setup-progress state, not a config-flow
+# answer. Without this, async_setup_entry (which runs on every HA restart,
+# not just first-ever setup) re-creates the notification every time —
+# resurrecting it even after the user dismissed it.
+OPT_WEBHOOK_NOTIFIED = "webhook_notified"
+
 # Metric names as sent by the iOS app (HealthMetricType raw values).
 METRIC_STEPS = "steps"
 METRIC_HEART_RATE = "heartRate"
