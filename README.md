@@ -111,7 +111,7 @@ more than one family member.)
 | Last workout distance | Meters — null for workouts without a meaningful distance (yoga, strength training, ...) |
 | Last workout calories | Active energy burned (kcal) |
 | Walking 11-08-2026 11:55 13.1 mi (×10) | Individual entities for your 10 most recent workouts, named after the workout itself (type, date/time, distance — distance shown in km or mi to match your Home Assistant unit system). Full detail (start/end, duration, distance, calories) in attributes. These appear one at a time as real workouts sync in, rather than all 10 existing upfront, and are never removed — older ones just get overwritten as newer workouts push them down |
-| Workout completed | Event entity — fires once per new workout with the same details as an attribute, so it shows in the Logbook and works as a clean automation trigger ("when a workout is completed..."). This is also where your **full, unlimited workout history** lives — every workout ever synced, not just the 10 above — browsable via Home Assistant's Logbook/History pages, filterable by type or date |
+| Workout completed | Event entity — fires once per new workout with the same details as an attribute, so it shows in the Logbook and works as a clean automation trigger ("when a workout is completed..."). Browsable via Home Assistant's Logbook/History pages, filterable by type or date — but note this is subject to Home Assistant's normal recorder purge (10 days by default), so it isn't a permanent record on its own. For genuinely unlimited, permanent workout history, see the readings database below — every workout ever synced (not just the 10 slots above) is archived there indefinitely |
 
 Every sample also fires a `healthsync_sample` event on the bus (raw payload,
 secret stripped) for your own automations; the app's Test Connection button
@@ -146,6 +146,12 @@ of readings (value, unit, exact start/end timestamps, source, and a few
 metric-specific fields like `sleep_stage` or `distance` where relevant).
 Handy for a custom chart card (e.g. ApexCharts) or your own export/analysis,
 without being limited to HA's hourly-statistics resolution.
+
+This also covers workouts (`metric: workouts`) — every workout ever synced,
+with its exact type, distance, calories, and start/end times, kept
+permanently and not subject to the Logbook/recorder purge mentioned above.
+This is the one to use if you want workout history that's genuinely
+unlimited rather than bounded by your recorder settings.
 
 ## Install
 
