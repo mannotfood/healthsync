@@ -9,18 +9,37 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from http import HTTPStatus
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aiohttp import web
 
 from homeassistant.components import cloud, persistent_notification, webhook
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_change
 from homeassistant.util import dt as dt_util
+
+if TYPE_CHECKING:
+    from homeassistant.components.recorder.models import StatisticData, StatisticMetaData
+
+# Statistics import is a self-contained enhancement (hourly HR/HRV/VO2 max/
+# weight history dated to when Apple actually recorded each reading — see
+# _import_hourly_statistic) on top of an integration that otherwise works
+# fine without it. Importing at module level so one wrong path on an
+# unexpected HA version can't take down steps/heart rate/workouts/everything
+# else — this degrades to "no hourly statistics" instead of "integration
+# fails to load".
+try:
+    from homeassistant.components.recorder.models import StatisticMeanType
+    from homeassistant.components.recorder.statistics import async_import_statistics
+
+    _STATISTICS_AVAILABLE = True
+except ImportError:
+    _STATISTICS_AVAILABLE = False
 
 from .const import (
     CONF_NAME,
@@ -100,6 +119,15 @@ class HealthSyncData:
     # rather than all MAX_RECENT_WORKOUTS at once, and are never removed —
     # this just tracks how far that progressive creation has gotten.
     workout_slots_created: int = 0
+    # Per-(metric, hour) accumulator of every latest-value reading (heart
+    # rate, HRV, VO2 max, weight) seen so far this hour, keyed by the hour
+    # it actually happened in (Apple's own timestamp, not sync time) —
+    # added 12 Aug 2026 to back proper Home Assistant long-term statistics.
+    # Independent per-hour buckets (not just "the current hour") so
+    # out-of-order/backfilled samples land in their correct bucket rather
+    # than corrupting whichever hour happened to be tracked most recently.
+    # Not persisted across restarts — see _import_hourly_statistic.
+    hourly_buckets: dict[tuple[str, datetime], list[float]] = field(default_factory=dict)
     # Timestamp of the last received (valid) payload.
     last_sync: datetime | None = None
     # Recently seen sample keys, to drop replays: the app re-sends a whole
@@ -256,6 +284,15 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
 
             data.last_sync = dt_util.utcnow()
             new_workout = _ingest_sample(hass, data, metric, sample)
+            if metric in LATEST_VALUE_METRICS:
+                # Independent of _ingest_sample's out-of-order guard (which
+                # only protects the *live* "current value" sensor) — every
+                # sample, in whatever order it arrives, belongs in its own
+                # true hour for history purposes.
+                sample_end = _parse_date(sample.get("end_date"))
+                raw_value = sample.get("value")
+                if sample_end and isinstance(raw_value, (int, float)):
+                    _import_hourly_statistic(hass, data, entry, metric, sample_end, float(raw_value))
             hass.bus.async_fire(EVENT_SAMPLE, _event_payload(sample))
             if new_workout is not None:
                 async_dispatcher_send(
@@ -276,6 +313,77 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
 def _event_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Payload for the HA event bus, without the shared secret."""
     return {key: value for key, value in payload.items() if key != "secret"}
+
+
+def _import_hourly_statistic(
+    hass: HomeAssistant,
+    data: HealthSyncData,
+    entry: HealthSyncConfigEntry,
+    metric: str,
+    end: datetime,
+    value: float,
+) -> None:
+    """Roll one latest-value reading (heart rate, HRV, VO2 max, weight) into
+    Home Assistant's long-term statistics, dated to the hour Apple actually
+    recorded it in — added 12 Aug 2026 because the sensor's plain state only
+    ever reflects "whatever was last received", collapsing everything that
+    happened between syncs down to a single point timestamped at sync time.
+
+    HA's statistics API only supports hourly-resolution backdated points —
+    there is no supported way to backdate raw state history at all, and
+    long-term statistics themselves are hard-capped at the hour (confirmed
+    against a real developer's account of hitting this exact wall on HA's
+    own community forum). So this buckets every reading within the hour it
+    actually happened in and re-imports that hour's min/max/mean on every
+    new arrival. `async_import_statistics` upserts by (statistic_id, hour),
+    so calling it repeatedly for the same hour is safe and only ever makes
+    that hour more accurate as more of its readings arrive — it never
+    duplicates or corrupts anything.
+
+    Buckets are kept in memory only (not persisted across HA restarts) and
+    pruned once they're more than 48h old — a hobby-scale app like this
+    doesn't need anything fancier than a simple bound on unlimited growth
+    over long uptimes; a restart mid-hour just means that one hour stops
+    getting further refined, which is a minor, self-correcting edge case,
+    not a real loss (whatever was already imported stays in HA's history).
+    """
+    if not _STATISTICS_AVAILABLE:
+        return
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{metric}")
+    if entity_id is None:
+        return  # Entity not registered yet — catches up on the next sample.
+    state = hass.states.get(entity_id)
+    if state is None:
+        return
+
+    hour_start = dt_util.as_utc(end).replace(minute=0, second=0, microsecond=0)
+    key = (metric, hour_start)
+    data.hourly_buckets.setdefault(key, []).append(value)
+
+    cutoff = hour_start - timedelta(hours=48)
+    for stale_key in [k for k in data.hourly_buckets if k[1] < cutoff]:
+        del data.hourly_buckets[stale_key]
+
+    values = data.hourly_buckets[key]
+    metadata: StatisticMetaData = {
+        "has_sum": False,
+        "mean_type": StatisticMeanType.ARITHMETIC,
+        "name": None,
+        "source": "recorder",
+        "statistic_id": entity_id,
+        "unit_of_measurement": state.attributes.get("unit_of_measurement"),
+    }
+    stat: StatisticData = {
+        "start": hour_start,
+        "min": min(values),
+        "max": max(values),
+        "mean": sum(values) / len(values),
+    }
+    try:
+        async_import_statistics(hass, metadata, [stat])
+    except Exception:  # noqa: BLE001 — best-effort; a bad import must never break the webhook.
+        _LOGGER.exception("HealthSync: failed to import hourly statistic for %s", entity_id)
 
 
 def _ingest_sample(

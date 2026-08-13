@@ -40,6 +40,42 @@ workout-related, listed as a related device on the HealthSync device page).
 | Woke up | Local clock time the night's sleep ended ("07:12"); full ISO datetime in the `timestamp` attribute |
 | Last sync | When the last payload arrived from the app |
 
+### Viewing accurate history for heart rate, HRV, VO2 max, and weight
+
+These four also get proper Home Assistant long-term statistics in the
+background — every individual reading Apple recorded is rolled into an
+hourly min/max/mean, dated to the hour it actually happened in (not
+whenever HealthSync happened to sync). Home Assistant's statistics engine
+only supports hourly resolution, so this is the finest-grained
+*accurately-dated* history it can produce.
+
+**Important:** the default entity card / History panel in Home Assistant
+usually graphs raw state changes, not this statistics data — so it can
+still look like one flat value that jumps once per sync, especially
+across a long gap (e.g. overnight). That's the default Home Assistant view
+being low-resolution, not a broken integration — the accurate hourly data
+is there regardless, in the statistics store.
+
+To actually see it, add a **Statistics Graph** card to a dashboard,
+pointed at the entity, e.g.:
+
+```yaml
+type: statistics-graph
+title: Heart rate
+entities:
+  - sensor.healthsync_heart_rate
+stat_types:
+  - min
+  - mean
+  - max
+period:
+  hour: 1
+```
+
+Swap the entity for HRV, VO2 max, or weight as needed (adjust `-` naming
+to match your actual entity IDs, and add `(Name)` suffixes if you've set
+up more than one family member).
+
 **HealthSync Workouts** device:
 
 | Entity | Meaning |
