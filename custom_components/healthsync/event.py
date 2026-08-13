@@ -16,7 +16,7 @@ from homeassistant.helpers.dispatcher import async_dispatcher_connect
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import HealthSyncConfigEntry, HealthSyncData
-from .const import SIGNAL_WORKOUT, WORKOUT_EVENT_TYPES
+from .const import SIGNAL_WORKOUT, WORKOUT_EVENT_TYPES, WORKOUT_TYPE_ICONS
 from .sensor import workout_device_info
 
 
@@ -41,7 +41,6 @@ class WorkoutCompletedEvent(EventEntity):
     _attr_has_entity_name = True
     _attr_should_poll = False
     _attr_name = "Workout completed"
-    _attr_icon = "mdi:run-fast"
     # One event_type per workout activity (running, cycling, ...) rather
     # than a single generic "workout_completed" for everything — so the
     # Logbook line and the entity's own event history are distinguishable
@@ -53,6 +52,15 @@ class WorkoutCompletedEvent(EventEntity):
         self._data = data
         self._attr_unique_id = f"{entry.entry_id}_workout_completed"
         self._attr_device_info = workout_device_info(entry)
+        # Icon matches whichever activity fired most recently (added
+        # 12 Aug 2026) rather than one fixed icon for every workout type —
+        # see WORKOUT_TYPE_ICONS. Starts at the generic fallback until the
+        # first event fires.
+        self._last_event_type = "other"
+
+    @property
+    def icon(self) -> str:
+        return WORKOUT_TYPE_ICONS.get(self._last_event_type, WORKOUT_TYPE_ICONS["other"])
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -74,5 +82,6 @@ class WorkoutCompletedEvent(EventEntity):
         event_type = workout.get("workout_type")
         if event_type not in WORKOUT_EVENT_TYPES:
             event_type = "other"
+        self._last_event_type = event_type
         self._trigger_event(event_type, workout)
         self.async_write_ha_state()

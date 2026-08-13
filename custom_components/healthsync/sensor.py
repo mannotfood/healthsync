@@ -35,6 +35,7 @@ from .const import (
     METRIC_WEIGHT,
     SIGNAL_UPDATE,
     SIGNAL_WORKOUT,
+    WORKOUT_TYPE_ICONS,
 )
 
 _CAMEL_SPLIT = re.compile(r"(?<!^)(?=[A-Z])")
@@ -435,12 +436,17 @@ class WorkoutTypeSensor(HealthSyncWorkoutSensor, RestoreSensor):
     start/end back out of attributes — same pattern as `SleepTimestampSensor`.
     """
 
-    _attr_icon = "mdi:run"
     _attr_name = "Last workout type"
 
     def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
         super().__init__(entry, data)
         self._attr_unique_id = f"{entry.entry_id}_last_workout_type"
+
+    @property
+    def icon(self) -> str:
+        # Matches the actual activity (added 12 Aug 2026) rather than one
+        # fixed icon for every workout — see WORKOUT_TYPE_ICONS.
+        return WORKOUT_TYPE_ICONS.get(self._data.last_workout_type or "", WORKOUT_TYPE_ICONS["other"])
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
@@ -577,14 +583,20 @@ class WorkoutSlotSensor(HealthSyncWorkoutSensor, RestoreSensor):
     rather than "Workout 3": `name` is a live property, recomputed on every
     dispatcher-driven state write, so as newer workouts shift into this slot
     the displayed name updates to match — same as the state and attributes.
+    The icon (added 12 Aug 2026) is likewise live and matches whichever
+    activity currently occupies this slot — see WORKOUT_TYPE_ICONS.
     """
-
-    _attr_icon = "mdi:run"
 
     def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData, slot: int) -> None:
         super().__init__(entry, data)
         self._slot = slot
         self._attr_unique_id = f"{entry.entry_id}_workout_slot_{slot}"
+
+    @property
+    def icon(self) -> str:
+        workout = self._data.recent_workouts[self._slot]
+        workout_type = workout["workout_type"] if workout else ""
+        return WORKOUT_TYPE_ICONS.get(workout_type or "", WORKOUT_TYPE_ICONS["other"])
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()

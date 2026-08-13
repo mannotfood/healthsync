@@ -21,6 +21,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.event import async_track_time_change
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 if TYPE_CHECKING:
@@ -132,9 +133,27 @@ class HealthSyncData:
     last_sync: datetime | None = None
     # Recently seen sample keys, to drop replays: the app re-sends a whole
     # batch if any part of it failed, so duplicates are expected by design
-    # and must not double-count daily totals.
+    # and must not double-count daily totals. In-memory only — wiped on
+    # every HA restart, which is fine for steps/HR/etc (redundant
+    # reprocessing there is harmless/self-correcting) but NOT fine for
+    # workouts, see seen_workout_keys below.
     seen: set[tuple] = field(default_factory=set)
     seen_order: list[tuple] = field(default_factory=list)
+    # Persisted (unlike `seen` above) set of "start|end|type" keys for
+    # every workout ever recorded — added 12 Aug 2026, fixing a real bug:
+    # "Sync All Workout History" deliberately re-fetches and re-sends every
+    # workout every time it's tapped (see SyncEngine.syncAllWorkoutHistory),
+    # relying entirely on dedup to avoid re-firing events for workouts
+    # already recorded. `seen` alone isn't enough for this because it's
+    # wiped on every HA restart, and this integration gets restarted often
+    # (every update needs one) — so a repeat tap shortly after any restart
+    # re-fired every workout as if new, compounding with each tap ("20
+    # syncs = 20 duplicate copies of every workout" as reported). Small and
+    # naturally bounded (a few hundred workouts a year even for a very
+    # active user, not thousands a day like steps), so no eviction cap is
+    # needed the way `seen` has one.
+    seen_workout_keys: set[str] = field(default_factory=set)
+    workout_store: Any = field(default=None, repr=False)
 
     def mark_seen(self, key: tuple, max_entries: int = 5000) -> bool:
         """Record a sample key; returns False if it was already seen."""
@@ -150,7 +169,15 @@ class HealthSyncData:
 
 async def async_setup_entry(hass: HomeAssistant, entry: HealthSyncConfigEntry) -> bool:
     """Set up HealthSync from a config entry."""
-    entry.runtime_data = HealthSyncData(totals_date=dt_util.now().date().isoformat())
+    # Load the persisted seen-workout dedup set before anything else can
+    # possibly receive a webhook — see HealthSyncData.seen_workout_keys.
+    workout_store: Store[list[str]] = Store(hass, version=1, key=f"{DOMAIN}_{entry.entry_id}_seen_workouts")
+    saved_workout_keys = await workout_store.async_load()
+
+    data = HealthSyncData(totals_date=dt_util.now().date().isoformat())
+    data.seen_workout_keys = set(saved_workout_keys) if saved_workout_keys else set()
+    data.workout_store = workout_store
+    entry.runtime_data = data
 
     webhook_id = entry.data[CONF_WEBHOOK_ID]
     webhook.async_register(
@@ -281,6 +308,26 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
             )
             if not data.mark_seen(key):
                 continue
+
+            # Second, *persistent* dedup layer for workouts specifically —
+            # "Sync All Workout History" deliberately re-sends every workout
+            # on every tap, and the check above alone doesn't survive an HA
+            # restart (which happens often — every integration update needs
+            # one). Without this, a repeat tap shortly after any restart
+            # re-fires every workout as a fresh event, compounding with each
+            # tap. See HealthSyncData.seen_workout_keys.
+            if metric == METRIC_WORKOUTS:
+                workout_key = "|".join(
+                    str(sample.get(field)) for field in ("start_date", "end_date", "workout_type")
+                )
+                if workout_key in data.seen_workout_keys:
+                    continue
+                data.seen_workout_keys.add(workout_key)
+                if data.workout_store is not None:
+                    try:
+                        await data.workout_store.async_save(list(data.seen_workout_keys))
+                    except Exception:  # noqa: BLE001 — best-effort; must never break the webhook.
+                        _LOGGER.exception("HealthSync: failed to persist seen-workout keys")
 
             data.last_sync = dt_util.utcnow()
             new_workout = _ingest_sample(hass, data, metric, sample)
