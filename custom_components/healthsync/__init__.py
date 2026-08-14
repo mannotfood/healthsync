@@ -379,6 +379,62 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
                 handled += 1
                 continue
 
+            # Authoritative "what does Apple Health say this is right now"
+            # snapshots for the four latest-value metrics and the "Last
+            # workout" summary — added 14 Aug 2026. Real bug this fixes: the
+            # live sensor used to be set from whichever anchored sample
+            # happened to land last in a batch, so a large backlog catching
+            # up (phone asleep for hours, then several webhook POSTs firing
+            # back to back) could make it flicker through several old
+            # readings within the same second — every value genuine, but
+            # timestamped to receipt time, making it look like nonsense or
+            # even data corruption. The iOS app now separately queries
+            # HealthKit for the single true current value on every sync
+            # (`SyncEngine.sendLatestValueSnapshot`/`sendLatestWorkoutSnapshot`)
+            # and flags it here with `daily_total: true`, same flag the
+            # existing steps/calories/sleep snapshots use.
+            #
+            # Deliberately handled *before* the replay-dedup below and
+            # applied unconditionally: this is a fresh HealthKit query result
+            # every single sync, never a replay of previously-sent data, so
+            # there's nothing to dedupe against — skipping straight to
+            # "apply it" is correct, not a bypass of anything meaningful.
+            # And deliberately handled *without* touching the readings
+            # database, per-reading event entities, Logbook, hourly
+            # statistics, workout history, or seen_workout_keys — all of
+            # that stays driven purely by the real anchored/backlog stream
+            # further below, unchanged, so a snapshot returning the same
+            # value the backlog already archived never creates a duplicate.
+            if sample.get("daily_total") and metric in LATEST_VALUE_METRICS:
+                raw_value = sample.get("value")
+                if isinstance(raw_value, (int, float)):
+                    data.latest_values[metric] = float(raw_value)
+                    end = _parse_date(sample.get("end_date"))
+                    if end:
+                        data.latest_end[metric] = end
+                data.last_sync = dt_util.utcnow()
+                handled += 1
+                continue
+
+            if sample.get("daily_total") and metric == METRIC_WORKOUTS:
+                start = _parse_date(sample.get("start_date"))
+                end = _parse_date(sample.get("end_date"))
+                value = sample.get("value")
+                distance = sample.get("distance")
+                data.last_workout_type = sample.get("workout_type")
+                data.last_workout_start = start
+                data.last_workout_end = end
+                data.last_workout_duration_min = (
+                    round((end - start).total_seconds() / 60, 1) if start and end else None
+                )
+                data.last_workout_distance_m = (
+                    float(distance) if isinstance(distance, (int, float)) else None
+                )
+                data.last_workout_calories = float(value) if isinstance(value, (int, float)) else None
+                data.last_sync = dt_util.utcnow()
+                handled += 1
+                continue
+
             # Drop replays (failed-batch re-sends) before they can
             # double-count daily totals or spam the event bus.
             key = (
