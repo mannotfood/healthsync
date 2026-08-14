@@ -655,39 +655,29 @@ def _ingest_sample(
         return
 
     if metric == METRIC_WORKOUTS:
-        # Whether this is the newest workout seen so far governs the "last
-        # workout" *snapshot* fields only — it must NOT gate whether the
-        # workout gets recorded at all. A normal incremental sync only ever
-        # delivers one or two workouts, roughly in order, so the two things
-        # were previously conflated (an out-of-order arrival just returned
-        # early). But "Sync All Workout History" delivers dozens/hundreds of
-        # workouts in one batch, in whatever order HealthKit's anchored
-        # query happens to return them — NOT guaranteed chronological — so
-        # treating "older than the last-processed one" as "reject entirely"
-        # silently dropped almost everything except whichever workout
-        # happened to be processed first (e.g. 40 synced from the app, only
-        # 1 landing in HA). Every workout that reaches here already passed
-        # the replay-dedup check in the webhook handler, so it's always
-        # legitimate to log it — only the scalar "latest" fields need the
-        # ordering guard.
-        is_newest = not (end and (previous := data.latest_end.get(metric)) and end < previous)
-
+        # Every workout that reaches here already passed the replay-dedup
+        # check in the webhook handler, so it's always legitimate to log it
+        # — this feeds the full, unbounded workout history (recent_workouts
+        # slots + the "Workout completed" event, returned below).
+        #
+        # This used to ALSO set the scalar "Last workout ___" sensors here,
+        # gated by an ordering guard (only the newest-seen workout won).
+        # Removed 14 Aug 2026 — that's now the exclusive job of the
+        # dedicated "most recent workout" snapshot handled earlier in
+        # handle_webhook (see the `daily_total` fast path). Leaving both in
+        # place was the actual bug behind the "current value flickers
+        # through old readings" report: the snapshot correctly set the
+        # scalar fields, and then this code, still running for every
+        # regular backlog sample, immediately overwrote them again with
+        # whatever the backlog happened to be replaying. Removing this
+        # block (rather than gating it) is deliberate: the scalar fields
+        # must have exactly one writer now, not two competing ones.
         value = payload.get("value")
         workout_type = payload.get("workout_type")
         duration_min = (end - start).total_seconds() / 60 if start and end else None
         distance = payload.get("distance")
         distance_m = float(distance) if isinstance(distance, (int, float)) else None
         calories = float(value) if isinstance(value, (int, float)) else None
-
-        if is_newest:
-            data.last_workout_type = workout_type
-            data.last_workout_start = start
-            data.last_workout_end = end
-            data.last_workout_duration_min = duration_min
-            data.last_workout_distance_m = distance_m
-            data.last_workout_calories = calories
-            if end:
-                data.latest_end[metric] = end
 
         workout = {
             "workout_type": workout_type,
@@ -724,12 +714,19 @@ def _ingest_sample(
             data.totals_date = dt_util.now().date().isoformat()
         return None
 
-    if metric in LATEST_VALUE_METRICS:
-        if end and (previous := data.latest_end.get(metric)) and end < previous:
-            return None
-        data.latest_values[metric] = float(value)
-        if end:
-            data.latest_end[metric] = end
+    # LATEST_VALUE_METRICS (heart rate / HRV / VO2 max / weight) used to set
+    # `data.latest_values` here, from every regular backlog sample, ordering
+    # guarded by `data.latest_end`. Removed 14 Aug 2026 for the same reason
+    # as the workouts block above: that's now the exclusive job of the
+    # dedicated "current value" snapshot handled earlier in handle_webhook,
+    # and leaving this in place meant every backlog sample was still
+    # overwriting the snapshot's correct value straight back to whatever
+    # the replay happened to contain — the actual bug behind readings
+    # flickering within the same second. Regular samples for these metrics
+    # still reach this point (and `_ingest_sample` is still called for
+    # them), but now have nothing left to do here — their job is already
+    # done by the archive/event/statistics handling in handle_webhook,
+    # before `_ingest_sample` is even called.
     return None
 
 
