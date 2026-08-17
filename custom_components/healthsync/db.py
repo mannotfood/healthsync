@@ -63,6 +63,38 @@ CREATE INDEX IF NOT EXISTS idx_readings_lookup
     ON readings (entry_id, metric, start_epoch);
 """
 
+# One-time cleanup before the unique index below can be created — added 17
+# Aug 2026 after a Weight full-history backfill (across several HA restarts
+# during today's testing) got archived twice, since the only dedup guarding
+# inserts lived in memory (`data.mark_seen`) and doesn't survive a restart.
+# Keeps whichever copy has the lowest id (i.e. the first one ever archived)
+# and drops the rest. Safe to run every startup — a no-op once no
+# duplicates remain, since `GROUP BY` + `MIN(id)` always resolves to
+# exactly the surviving rows.
+_DEDUP_EXISTING = """
+DELETE FROM readings WHERE id NOT IN (
+    SELECT MIN(id) FROM readings
+    GROUP BY entry_id, metric, start_date, end_date, value, COALESCE(sleep_stage, '')
+);
+"""
+
+# Real, permanent fix for the same issue: a uniqueness constraint on the
+# fields that define "the same reading", so the exact same sample can never
+# be stored twice again — no matter how many times it's replayed or how
+# many restarts it survives across, for any metric, not just the ones that
+# happen to get a bespoke persistent dedup store (contrast with workouts'
+# `seen_workout_keys`, added 12 Aug 2026 for this same class of bug, but
+# only for that one metric). COALESCE normalizes the nullable columns
+# (`value`, `sleep_stage`) to a fixed sentinel first — SQLite treats NULL as
+# distinct from NULL in a unique constraint, so without this, every
+# non-sleep-stage reading (i.e. everything except the four sleep-stage
+# snapshots) would silently bypass the constraint entirely.
+_UNIQUE_INDEX = """
+CREATE UNIQUE INDEX IF NOT EXISTS idx_readings_unique
+    ON readings (entry_id, metric, start_date, end_date,
+                 COALESCE(value, -1e18), COALESCE(sleep_stage, ''));
+"""
+
 
 def _parse_epoch(raw: Any) -> float | None:
     """Best-effort parse of the app's ISO8601 start_date into a Unix
@@ -138,6 +170,11 @@ class ReadingsStore:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
         conn.executescript(_SCHEMA)
+        # Order matters: clear out any duplicates that already exist
+        # *before* the unique index is created, since SQLite refuses to
+        # build a unique index over data that would violate it.
+        conn.executescript(_DEDUP_EXISTING)
+        conn.executescript(_UNIQUE_INDEX)
         self._conn = conn
 
     async def async_insert(self, metric: str, sample: dict[str, Any]) -> None:
@@ -158,7 +195,7 @@ class ReadingsStore:
         with self._conn:
             self._conn.execute(
                 """
-                INSERT INTO readings
+                INSERT OR IGNORE INTO readings
                     (entry_id, metric, value, sleep_stage, unit, start_date,
                      end_date, start_epoch, source, daily_total, workout_type,
                      distance, raw_payload)
