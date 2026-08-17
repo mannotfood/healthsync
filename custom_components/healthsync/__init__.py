@@ -328,7 +328,11 @@ async def async_remove_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 async def async_unload_entry(hass: HomeAssistant, entry: HealthSyncConfigEntry) -> bool:
     """Unload a config entry."""
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    store: ReadingsStore | None = entry.runtime_data.readings_store
+    if store is not None:
+        await store.async_close()
+    return unloaded
 
 
 def _make_webhook_handler(entry: HealthSyncConfigEntry):
