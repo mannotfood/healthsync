@@ -33,6 +33,29 @@ METRIC_RESTING_ENERGY = "restingEnergy"
 METRIC_DISTANCE = "distanceWalkingRunning"
 METRIC_VO2_MAX = "vo2Max"
 METRIC_WEIGHT = "weight"
+# Added 18 Aug 2026 — same generic quantity-metric pipeline as everything
+# else here, no special-casing needed (see sensor.py/iOS's HealthMetricType
+# for the matching addition).
+METRIC_RESTING_HEART_RATE = "restingHeartRate"
+# Added 18 Aug 2026 — requested via GitHub #15 (blood pressure) plus a
+# broader "what else is missing" pass. Same generic quantity-metric
+# pipeline as everything above; see iOS's HealthMetricType for the matching
+# cases and HistoryBackfillEngine for why every one of these (like every
+# other metric except workouts) can also be manually backfilled.
+METRIC_BLOOD_PRESSURE_SYSTOLIC = "bloodPressureSystolic"
+METRIC_BLOOD_PRESSURE_DIASTOLIC = "bloodPressureDiastolic"
+METRIC_WALKING_HEART_RATE = "walkingHeartRateAverage"
+METRIC_HEART_RATE_RECOVERY = "heartRateRecoveryOneMinute"
+METRIC_AFIB_BURDEN = "atrialFibrillationBurden"
+METRIC_OXYGEN_SATURATION = "oxygenSaturation"
+METRIC_RESPIRATORY_RATE = "respiratoryRate"
+METRIC_BODY_TEMPERATURE = "bodyTemperature"
+METRIC_BLOOD_GLUCOSE = "bloodGlucose"
+METRIC_BODY_MASS_INDEX = "bodyMassIndex"
+METRIC_BODY_FAT_PERCENTAGE = "bodyFatPercentage"
+METRIC_LEAN_BODY_MASS = "leanBodyMass"
+METRIC_HEIGHT = "height"
+METRIC_WAIST_CIRCUMFERENCE = "waistCircumference"
 METRIC_TEST = "test_connection"
 
 QUANTITY_METRICS = {
@@ -46,6 +69,21 @@ QUANTITY_METRICS = {
     METRIC_DISTANCE,
     METRIC_VO2_MAX,
     METRIC_WEIGHT,
+    METRIC_RESTING_HEART_RATE,
+    METRIC_BLOOD_PRESSURE_SYSTOLIC,
+    METRIC_BLOOD_PRESSURE_DIASTOLIC,
+    METRIC_WALKING_HEART_RATE,
+    METRIC_HEART_RATE_RECOVERY,
+    METRIC_AFIB_BURDEN,
+    METRIC_OXYGEN_SATURATION,
+    METRIC_RESPIRATORY_RATE,
+    METRIC_BODY_TEMPERATURE,
+    METRIC_BLOOD_GLUCOSE,
+    METRIC_BODY_MASS_INDEX,
+    METRIC_BODY_FAT_PERCENTAGE,
+    METRIC_LEAN_BODY_MASS,
+    METRIC_HEIGHT,
+    METRIC_WAIST_CIRCUMFERENCE,
 }
 # Metrics accumulated into a daily total (the app sends incremental samples,
 # not running totals).
@@ -59,7 +97,14 @@ DAILY_TOTAL_METRICS = {
 }
 # Metrics whose state is just "the most recent sample" (a discrete,
 # infrequent reading) rather than a running daily total.
-LATEST_VALUE_METRICS = {METRIC_HEART_RATE, METRIC_HRV, METRIC_VO2_MAX, METRIC_WEIGHT}
+LATEST_VALUE_METRICS = {
+    METRIC_HEART_RATE, METRIC_HRV, METRIC_VO2_MAX, METRIC_WEIGHT, METRIC_RESTING_HEART_RATE,
+    METRIC_BLOOD_PRESSURE_SYSTOLIC, METRIC_BLOOD_PRESSURE_DIASTOLIC, METRIC_WALKING_HEART_RATE,
+    METRIC_HEART_RATE_RECOVERY, METRIC_AFIB_BURDEN, METRIC_OXYGEN_SATURATION,
+    METRIC_RESPIRATORY_RATE, METRIC_BODY_TEMPERATURE, METRIC_BLOOD_GLUCOSE,
+    METRIC_BODY_MASS_INDEX, METRIC_BODY_FAT_PERCENTAGE, METRIC_LEAN_BODY_MASS,
+    METRIC_HEIGHT, METRIC_WAIST_CIRCUMFERENCE,
+}
 
 SLEEP_STAGES = [
     "inBed",

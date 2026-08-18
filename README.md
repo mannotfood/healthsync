@@ -18,23 +18,38 @@ above is this project specifically.
 
 ## Entities
 
-The integration creates two devices: **HealthSync** (steps, heart rate,
-HRV, sleep, flights climbed, exercise time, resting energy, distance, VO2
-max, weight, and sync status) and **HealthSync Workouts** (everything
-workout-related, listed as a related device on the HealthSync device page).
+The integration creates two devices: **HealthSync** (steps, heart rate and
+related vitals, sleep, body measurements, activity totals, and sync status
+— see the table below for the full list) and **HealthSync Workouts**
+(everything workout-related, listed as a related device on the HealthSync
+device page).
 
 | Entity | Meaning |
 |---|---|
 | Steps today | Steps accumulated since local midnight |
 | Active calories today | Active energy (kcal) since local midnight |
 | Heart rate | Most recent heart-rate sample (bpm) |
+| Resting heart rate | Most recent resting heart-rate sample (bpm) |
 | Heart rate variability | Most recent HRV SDNN sample (ms) |
+| Blood pressure (systolic) / (diastolic) | Most recent blood-pressure reading (mmHg) — two separate entities, since HealthKit tracks them as two quantities |
+| Walking heart rate | Most recent walking heart-rate average (bpm) |
+| Heart rate recovery | Most recent 1-minute post-exercise heart rate recovery (bpm) |
+| AFib burden | Most recent atrial fibrillation burden estimate (%) |
+| Blood oxygen | Most recent SpO2 reading (%) |
+| Respiratory rate | Most recent respiratory rate (breaths/min) |
+| Body temperature | Most recent body temperature reading (°C, or °F to match your Home Assistant unit system) |
+| Blood glucose | Most recent blood glucose reading (mg/dL) |
 | Flights climbed today | Flights climbed since local midnight |
 | Exercise time today | Apple's "Exercise" minutes since local midnight |
 | Resting energy today | Basal/resting energy (kcal) since local midnight |
 | Walking + running distance today | Meters since local midnight — shown in km or mi to match your Home Assistant unit system |
 | VO2 max | Most recent VO2 max reading (mL/(kg·min)) |
 | Weight | Most recent weight sample — shown in kg or lb to match your Home Assistant unit system |
+| Body mass index | Most recent BMI reading (unitless) |
+| Body fat percentage | Most recent body fat reading (%) |
+| Lean body mass | Most recent lean body mass reading — shown in kg or lb to match your Home Assistant unit system |
+| Height | Most recent height reading — shown in m or ft to match your Home Assistant unit system |
+| Waist circumference | Most recent waist circumference reading — shown in m or ft to match your Home Assistant unit system |
 | Heart rate reading / Heart rate variability reading / VO2 max reading / Weight reading | Event entities — fire once per *individual* reading, regardless of how many arrive in the same sync. The "current value" sensors above only ever reflect whichever reading happened to be last in a batch; these guarantee every reading's exact value + Apple's own timestamp is genuinely recorded (value/unit/start_date/end_date attributes) — zero rounding or averaging, even for readings a batch would otherwise have silently overwritten. Shows a readable Logbook line (e.g. "Heart rate reading recorded 84 bpm"), and is fully queryable via History/Logbook, automations, or exports. Not a graphable History *line chart* the way a regular sensor is, though — this is the exact record, not the visual one |
 | Sleep last night | Hours asleep over the last 24 hours; per-stage breakdown (`deep_minutes`, `rem_minutes`, `core_minutes`, `awake_minutes`) as attributes |
 | Fell asleep | Local clock time the night's sleep began ("23:41"); full ISO datetime in the `timestamp` attribute |

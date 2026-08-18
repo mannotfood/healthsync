@@ -1,9 +1,13 @@
 # HealthSync — Age Suitability
 
 HealthSync's App Store age rating flags "Health or Wellness Topics" because
-the app reads Apple Health data (steps, heart rate, heart rate variability,
-sleep, and active calories). That flag covers apps that *handle* health
-data — it does not mean the app offers self-care or lifestyle advice.
+the app reads Apple Health data — the metrics you individually enable in
+Settings, currently spanning activity (steps, active calories, workouts,
+and more), heart & vitals (heart rate, HRV, blood pressure, blood oxygen,
+blood glucose, and more), sleep, and body measurements (weight, height,
+and more). That flag covers apps that *handle* health data — it does not
+mean the app offers self-care or lifestyle advice, and that remains true
+regardless of how many metrics the app supports.
 
 ## What the app does
 

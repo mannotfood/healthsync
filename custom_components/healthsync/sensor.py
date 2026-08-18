@@ -11,7 +11,7 @@ from homeassistant.components.sensor import (
     SensorEntity,
     SensorStateClass,
 )
-from homeassistant.const import UnitOfLength
+from homeassistant.const import UnitOfLength, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
@@ -24,14 +24,29 @@ from .const import (
     DOMAIN,
     MAX_RECENT_WORKOUTS,
     METRIC_ACTIVE_CALORIES,
+    METRIC_AFIB_BURDEN,
+    METRIC_BLOOD_GLUCOSE,
+    METRIC_BLOOD_PRESSURE_DIASTOLIC,
+    METRIC_BLOOD_PRESSURE_SYSTOLIC,
+    METRIC_BODY_FAT_PERCENTAGE,
+    METRIC_BODY_MASS_INDEX,
+    METRIC_BODY_TEMPERATURE,
     METRIC_DISTANCE,
     METRIC_EXERCISE_TIME,
     METRIC_FLIGHTS_CLIMBED,
     METRIC_HEART_RATE,
+    METRIC_HEART_RATE_RECOVERY,
+    METRIC_HEIGHT,
     METRIC_HRV,
+    METRIC_LEAN_BODY_MASS,
+    METRIC_OXYGEN_SATURATION,
+    METRIC_RESPIRATORY_RATE,
     METRIC_RESTING_ENERGY,
+    METRIC_RESTING_HEART_RATE,
     METRIC_STEPS,
     METRIC_VO2_MAX,
+    METRIC_WAIST_CIRCUMFERENCE,
+    METRIC_WALKING_HEART_RATE,
     METRIC_WEIGHT,
     SIGNAL_UPDATE,
     SIGNAL_WORKOUT,
@@ -100,6 +115,66 @@ async def async_setup_entry(
             ),
             LatestValueSensor(
                 entry, data, METRIC_HRV, "Heart rate variability", "ms", "mdi:heart-flash"
+            ),
+            # Added 18 Aug 2026 — requested via GitHub #15. Same
+            # generic LatestValueSensor pattern as heart rate/HRV above.
+            LatestValueSensor(
+                entry, data, METRIC_RESTING_HEART_RATE, "Resting heart rate", "bpm", "mdi:heart-outline"
+            ),
+            # Added 18 Aug 2026 — requested via GitHub #15 (blood pressure)
+            # plus a broader "what else is missing" pass. Same generic
+            # LatestValueSensor pattern as everything above; device_class is
+            # only set where the class is long-standing enough in HA core to
+            # be safe against this integration's declared minimum HA version
+            # (2024.4.0) — newer/less-certain device classes are left unset
+            # rather than risk an AttributeError breaking this whole module.
+            LatestValueSensor(
+                entry, data, METRIC_BLOOD_PRESSURE_SYSTOLIC, "Blood pressure (systolic)", "mmHg",
+                "mdi:gauge", device_class=SensorDeviceClass.PRESSURE,
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_BLOOD_PRESSURE_DIASTOLIC, "Blood pressure (diastolic)", "mmHg",
+                "mdi:gauge", device_class=SensorDeviceClass.PRESSURE,
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_WALKING_HEART_RATE, "Walking heart rate", "bpm", "mdi:walk"
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_HEART_RATE_RECOVERY, "Heart rate recovery", "bpm", "mdi:heart-cog-outline"
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_AFIB_BURDEN, "AFib burden", "%", "mdi:heart-pulse"
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_OXYGEN_SATURATION, "Blood oxygen", "%", "mdi:water-percent"
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_RESPIRATORY_RATE, "Respiratory rate", "breaths/min", "mdi:lungs"
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_BODY_TEMPERATURE, "Body temperature", UnitOfTemperature.CELSIUS,
+                "mdi:thermometer", device_class=SensorDeviceClass.TEMPERATURE,
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_BLOOD_GLUCOSE, "Blood glucose", "mg/dL", "mdi:diabetes"
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_BODY_MASS_INDEX, "Body mass index", None, "mdi:human"
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_BODY_FAT_PERCENTAGE, "Body fat percentage", "%", "mdi:percent"
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_LEAN_BODY_MASS, "Lean body mass", "kg", "mdi:scale-bathroom",
+                device_class=SensorDeviceClass.WEIGHT,
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_HEIGHT, "Height", "m", "mdi:human-male-height",
+                device_class=SensorDeviceClass.DISTANCE,
+            ),
+            LatestValueSensor(
+                entry, data, METRIC_WAIST_CIRCUMFERENCE, "Waist circumference", "m", "mdi:tape-measure",
+                device_class=SensorDeviceClass.DISTANCE,
             ),
             # Added 12 Aug 2026 — same generic DailyTotalSensor/
             # LatestValueSensor classes as everything above, just more of
@@ -301,7 +376,10 @@ class LatestValueSensor(HealthSyncSensor, RestoreSensor):
         data: HealthSyncData,
         metric: str,
         name: str,
-        unit: str,
+        # `None` for unitless metrics (Body Mass Index is a bare ratio, not
+        # a physical quantity with a unit) — added 18 Aug 2026, matches how
+        # the Health app itself shows BMI with no unit label.
+        unit: str | None,
         icon: str,
         device_class: SensorDeviceClass | None = None,
     ) -> None:

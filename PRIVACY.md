@@ -6,7 +6,7 @@ HealthSync is a local-first iOS app. This policy covers both the iOS app and its
 
 ## What the app does
 
-HealthSync reads the Health metrics you enable (steps, heart rate, heart rate variability, sleep, and active calories) from Apple HealthKit and sends them directly from your device to the Home Assistant webhook URL you configure in the app's Settings screen. That's the entire data flow.
+HealthSync reads the Health metrics you enable in Settings — currently steps, heart rate and related vitals (resting/walking heart rate, heart rate recovery, AFib burden, blood oxygen, respiratory rate, blood pressure, blood glucose, body temperature, HRV), sleep, activity totals (active calories, flights climbed, exercise time, resting energy, distance), workouts, and body measurements (weight, BMI, body fat percentage, lean body mass, height, waist circumference) — from Apple HealthKit, and sends them directly from your device to the Home Assistant webhook URL you configure in the app's Settings screen. That's the entire data flow. Every metric is individually toggleable; see the app's Settings screen for the current, authoritative list.
 
 ## What we don't do
 
