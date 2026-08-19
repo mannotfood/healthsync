@@ -162,6 +162,15 @@ metric-specific fields like `sleep_stage` or `distance` where relevant).
 Handy for a custom chart card (e.g. ApexCharts) or your own export/analysis,
 without being limited to HA's hourly-statistics resolution.
 
+**Example dashboard card:**
+[`dashboard-examples/metric-history-graph.yaml`](dashboard-examples/metric-history-graph.yaml)
+— a dropdown to pick any metric, a dropdown to pick a date range (24h up to
+all-time), plotted on a graph. Steps/Active Calories/Flights Climbed/Exercise
+Time/Resting Energy/Distance are shown as real per-day totals (correctly
+handling multi-source setups like iPhone + Apple Watch) rather than raw
+per-sample points. Copy-paste ready — the file has full setup steps and
+exactly what to change for your own instance.
+
 This also covers workouts (`metric: workouts`) — every workout ever synced,
 with its exact type, distance, calories, and start/end times, kept
 permanently and not subject to the Logbook/recorder purge mentioned above.

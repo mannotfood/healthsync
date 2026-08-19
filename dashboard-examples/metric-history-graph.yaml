@@ -1,0 +1,174 @@
+# HealthSync — "any metric, any date range" history graph
+#
+# A dashboard card with a metric dropdown and a date-range dropdown, plotting
+# real unaveraged history pulled straight from the `healthsync.get_readings`
+# action (see the README's "Complete, unaveraged history" section) — not
+# HA's hourly statistics, so it isn't limited to that resolution and it
+# covers anything you've recovered with the app's Settings → Sync History
+# backfill too.
+#
+# ── Requirements (all free, install via HACS → Frontend) ───────────────────
+#   - apexcharts-card   (RomRider/apexcharts-card)
+#   - config-template-card   (iantrich/config-template-card)
+#
+# ── Setup ────────────────────────────────────────────────────────────────
+# 1. Install the two cards above via HACS if you don't already have them.
+# 2. Create two Helpers (Settings → Devices & Services → Helpers →
+#    + Create Helper → Dropdown), with these exact names/entity IDs so they
+#    match the card below (or rename both consistently if you'd rather use
+#    your own):
+#
+#    Name: HealthSync Graph Metric   →  input_select.healthsync_graph_metric
+#    Options (one per line, in any order):
+#      Steps
+#      Heart Rate
+#      Heart Rate Variability
+#      Active Calories
+#      Flights Climbed
+#      Exercise Time
+#      Resting Energy
+#      Walking + Running Distance
+#      VO2 Max
+#      Weight
+#      Resting Heart Rate
+#      Blood Pressure (Systolic)
+#      Blood Pressure (Diastolic)
+#      Walking Heart Rate
+#      Heart Rate Recovery
+#      AFib Burden
+#      Blood Oxygen
+#      Respiratory Rate
+#      Body Temperature
+#      Blood Glucose
+#      Body Mass Index
+#      Body Fat Percentage
+#      Lean Body Mass
+#      Height
+#      Waist Circumference
+#
+#    Name: HealthSync Graph Range   →  input_select.healthsync_graph_range
+#    Options:
+#      Last 24 Hours
+#      Last 7 Days
+#      Last 30 Days
+#      Last 90 Days
+#      Last Year
+#      All Time
+#
+# 3. Find your HealthSync device ID: Settings → Devices & Services →
+#    HealthSync → click your device → the ID is in the page URL
+#    (.../config/devices/device/<this-part>). Or: Developer Tools → Actions
+#    → pick "HealthSync: Get readings" → the Device field's picker resolves
+#    it for you automatically once selected.
+# 4. Replace YOUR_HEALTHSYNC_DEVICE_ID below with that ID.
+# 5. Paste the whole thing into a dashboard view (Edit Dashboard → Add Card
+#    → Manual, or via the YAML editor for the view).
+#
+# ── Steps/Active Calories/Flights Climbed/Exercise Time/Resting Energy/  ───
+# ── Distance are handled differently from the rest ─────────────────────────
+# Those six are sent as many small incremental samples throughout the day,
+# not one number, so they're aggregated into a real per-day total (bar
+# chart) instead of plotted as individual raw readings. That total is built
+# by summing each day's incremental samples *per source first*, then taking
+# whichever single source totals highest that day — avoiding double-counting
+# on a multi-source setup (iPhone + Apple Watch both logging steps is
+# common). Every other metric plots each raw reading directly (line chart).
+
+type: vertical-stack
+cards:
+  - type: entities
+    title: HealthSync Graph
+    entities:
+      - entity: input_select.healthsync_graph_metric
+        name: Metric
+      - entity: input_select.healthsync_graph_range
+        name: Date Range
+
+  - type: custom:config-template-card
+    entities:
+      - input_select.healthsync_graph_metric
+      - input_select.healthsync_graph_range
+    variables:
+      METRIC_LABEL: states['input_select.healthsync_graph_metric'].state
+      RANGE_LABEL: states['input_select.healthsync_graph_range'].state
+    card:
+      type: custom:apexcharts-card
+      graph_span: >-
+        ${ ({"Last 24 Hours":"24h","Last 7 Days":"7d","Last 30 Days":"30d",
+             "Last 90 Days":"90d","Last Year":"365d","All Time":"1500d"})[RANGE_LABEL] }
+      header:
+        show: true
+        title: HealthSync History
+        show_states: true
+        colorize_states: true
+      apex_config:
+        chart:
+          toolbar:
+            show: true
+          zoom:
+            enabled: true
+        stroke:
+          curve: smooth
+          width: 2
+        dataLabels:
+          enabled: false
+      series:
+        - entity: input_select.healthsync_graph_metric
+          name: Value
+          type: >-
+            ${ ["Steps","Active Calories","Flights Climbed","Exercise Time","Resting Energy",
+                "Walking + Running Distance"].includes(METRIC_LABEL) ? "column" : "line" }
+          color: "#03a9f4"
+          data_generator: |
+            const metricMap = {
+              "Steps": "steps", "Heart Rate": "heartRate", "Heart Rate Variability": "heartRateVariability",
+              "Active Calories": "activeCalories", "Flights Climbed": "flightsClimbed", "Exercise Time": "exerciseTime",
+              "Resting Energy": "restingEnergy", "Walking + Running Distance": "distanceWalkingRunning",
+              "VO2 Max": "vo2Max", "Weight": "weight", "Resting Heart Rate": "restingHeartRate",
+              "Blood Pressure (Systolic)": "bloodPressureSystolic", "Blood Pressure (Diastolic)": "bloodPressureDiastolic",
+              "Walking Heart Rate": "walkingHeartRateAverage", "Heart Rate Recovery": "heartRateRecoveryOneMinute",
+              "AFib Burden": "atrialFibrillationBurden", "Blood Oxygen": "oxygenSaturation",
+              "Respiratory Rate": "respiratoryRate", "Body Temperature": "bodyTemperature", "Blood Glucose": "bloodGlucose",
+              "Body Mass Index": "bodyMassIndex", "Body Fat Percentage": "bodyFatPercentage",
+              "Lean Body Mass": "leanBodyMass", "Height": "height", "Waist Circumference": "waistCircumference"
+            };
+            const dailyTotalMetrics = new Set([
+              "steps", "activeCalories", "flightsClimbed", "exerciseTime", "restingEnergy", "distanceWalkingRunning"
+            ]);
+            const rangeMap = {
+              "Last 24 Hours": 24, "Last 7 Days": 24 * 7, "Last 30 Days": 24 * 30,
+              "Last 90 Days": 24 * 90, "Last Year": 24 * 365, "All Time": null
+            };
+            const metric = metricMap[entity.state];
+            if (!metric) return [];
+            const hours = rangeMap[hass.states["input_select.healthsync_graph_range"].state];
+            const params = { device_id: "YOUR_HEALTHSYNC_DEVICE_ID", metric: metric };
+            if (hours) {
+              params.start = new Date(Date.now() - hours * 60 * 60 * 1000).toISOString();
+            }
+            const result = await hass.callService("healthsync", "get_readings", params, undefined, true, true);
+            const readings = (result && result.response && result.response.readings) || [];
+
+            if (dailyTotalMetrics.has(metric)) {
+              // Sum raw incremental samples (not the "daily_total" snapshot
+              // rows — those are already a cumulative total, summing both
+              // would double-count) per day *and* per source, then take
+              // whichever single source totals highest that day.
+              const perDaySource = {};
+              for (const r of readings) {
+                if (r.daily_total || r.value == null) continue;
+                const d = new Date(r.start_date);
+                const dayKey = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+                const src = r.source || "unknown";
+                perDaySource[dayKey] = perDaySource[dayKey] || {};
+                perDaySource[dayKey][src] = (perDaySource[dayKey][src] || 0) + r.value;
+              }
+              return Object.entries(perDaySource)
+                .map(([day, bySource]) => [Number(day), Math.max(...Object.values(bySource))])
+                .sort((a, b) => a[0] - b[0]);
+            }
+
+            return readings
+              .filter((r) => r.value !== null && r.value !== undefined)
+              .map((r) => [new Date(r.start_date).getTime(), r.value])
+              .sort((a, b) => a[0] - b[0]);
