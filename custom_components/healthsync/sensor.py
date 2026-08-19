@@ -620,10 +620,20 @@ class WorkoutDistanceSensor(HealthSyncWorkoutSensor, RestoreSensor):
 
 
 class WorkoutCaloriesSensor(HealthSyncWorkoutSensor, RestoreSensor):
-    """Active energy burned during the most recent workout."""
+    """Active energy burned during the most recent workout.
+
+    No `state_class` (fixed 18 Aug 2026 — was `MEASUREMENT`, which Home
+    Assistant rejects for `device_class: energy`: energy/gas/water/volume
+    are restricted to `total`/`total_increasing` only, since HA's own
+    statistics engine otherwise assumes it can validly average/sum a
+    stream of them, which doesn't make sense for calories in *whichever
+    workout happened to be most recent* — each value is an independent
+    snapshot, not a running total. `None` is the correct state for "not
+    part of HA's automatic long-term statistics", not a placeholder;
+    device_class alone still gets the right icon/unit treatment.
+    """
 
     _attr_device_class = SensorDeviceClass.ENERGY
-    _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = "kcal"
     _attr_icon = "mdi:fire"
     _attr_name = "Last workout calories"

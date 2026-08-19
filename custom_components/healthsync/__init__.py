@@ -32,7 +32,8 @@ if TYPE_CHECKING:
 
 # Statistics import is a self-contained enhancement (hourly HR/HRV/VO2 max/
 # weight history dated to when Apple actually recorded each reading — see
-# _import_hourly_statistic) on top of an integration that otherwise works
+# _record_hourly_sample/_flush_hourly_statistic) on top of an integration
+# that otherwise works
 # fine without it. Importing at module level so one wrong path on an
 # unexpected HA version can't take down steps/heart rate/workouts/everything
 # else — this degrades to "no hourly statistics" instead of "integration
@@ -57,8 +58,16 @@ from .const import (
     EVENT_TEST,
     LATEST_VALUE_METRICS,
     MAX_RECENT_WORKOUTS,
+    METRIC_BLOOD_GLUCOSE,
+    METRIC_BLOOD_PRESSURE_DIASTOLIC,
+    METRIC_BLOOD_PRESSURE_SYSTOLIC,
+    METRIC_BODY_TEMPERATURE,
+    METRIC_HEIGHT,
+    METRIC_LEAN_BODY_MASS,
     METRIC_SLEEP,
     METRIC_TEST,
+    METRIC_WAIST_CIRCUMFERENCE,
+    METRIC_WEIGHT,
     METRIC_WORKOUTS,
     OPT_WEBHOOK_NOTIFIED,
     QUANTITY_METRICS,
@@ -136,7 +145,7 @@ class HealthSyncData:
     # Independent per-hour buckets (not just "the current hour") so
     # out-of-order/backfilled samples land in their correct bucket rather
     # than corrupting whichever hour happened to be tracked most recently.
-    # Not persisted across restarts — see _import_hourly_statistic.
+    # Not persisted across restarts — see _record_hourly_sample.
     hourly_buckets: dict[tuple[str, datetime], list[float]] = field(default_factory=dict)
     # Timestamp of the last received (valid) payload.
     last_sync: datetime | None = None
@@ -365,6 +374,13 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
         else:
             samples = [payload]
 
+        # (metric, hour) buckets touched by *this* webhook payload — the
+        # actual, comparatively expensive statistics import (writes to HA's
+        # own recorder database) is deferred until after the loop and done
+        # once per distinct bucket touched here, not once per sample. See
+        # `_flush_hourly_statistic`.
+        touched_hourly_buckets: set[tuple[str, datetime]] = set()
+
         handled = 0
         for sample in samples:
             metric = sample.get("metric")
@@ -486,7 +502,9 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
                 sample_end = _parse_date(sample.get("end_date"))
                 raw_value = sample.get("value")
                 if sample_end and isinstance(raw_value, (int, float)):
-                    _import_hourly_statistic(hass, data, entry, metric, sample_end, float(raw_value))
+                    touched_hourly_buckets.add(
+                        _record_hourly_sample(data, metric, sample_end, float(raw_value))
+                    )
                 # Per-sample event so every individual reading is genuinely
                 # preserved, not just whichever one happens to be last when
                 # several arrive in one batch (SIGNAL_UPDATE — which drives
@@ -529,6 +547,12 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
                 )
             handled += 1
 
+        # One statistics import per distinct (metric, hour) bucket touched
+        # by this whole payload, now that every sample's already folded
+        # into `data.hourly_buckets` above — see _flush_hourly_statistic.
+        for touched_metric, touched_hour in touched_hourly_buckets:
+            _flush_hourly_statistic(hass, data, entry, touched_metric, touched_hour)
+
         if handled == 0 and samples:
             # Everything was a duplicate — still fine, still 200.
             data.last_sync = dt_util.utcnow()
@@ -544,30 +568,42 @@ def _event_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if key != "secret"}
 
 
-def _import_hourly_statistic(
-    hass: HomeAssistant,
-    data: HealthSyncData,
-    entry: HealthSyncConfigEntry,
-    metric: str,
-    end: datetime,
-    value: float,
-) -> None:
-    """Roll one latest-value reading (heart rate, HRV, VO2 max, weight) into
-    Home Assistant's long-term statistics, dated to the hour Apple actually
-    recorded it in — added 12 Aug 2026 because the sensor's plain state only
-    ever reflects "whatever was last received", collapsing everything that
-    happened between syncs down to a single point timestamped at sync time.
+# HA's recorder statistics API deprecated omitting `unit_class` on imported
+# metadata (Home Assistant Core 2025.11) — it tells the recorder which
+# built-in unit converter, if any, applies to a statistic, so values can be
+# displayed/converted consistently with the user's chosen unit system
+# (e.g. mass shown in lb instead of kg). Only mapped here for metrics with
+# a real, unambiguous HA converter; every other metric (heart rate, HRV,
+# VO2 max, the various percentages, BMI, ...) has no meaningful unit
+# family to convert between, so `None` — the dict's default via `.get` —
+# is the *correct* value per HA's own docs, not a placeholder.
+_HOURLY_STATISTIC_UNIT_CLASSES: dict[str, str] = {
+    METRIC_WEIGHT: "mass",
+    METRIC_LEAN_BODY_MASS: "mass",
+    METRIC_HEIGHT: "distance",
+    METRIC_WAIST_CIRCUMFERENCE: "distance",
+    METRIC_BODY_TEMPERATURE: "temperature",
+    METRIC_BLOOD_PRESSURE_SYSTOLIC: "pressure",
+    METRIC_BLOOD_PRESSURE_DIASTOLIC: "pressure",
+    METRIC_BLOOD_GLUCOSE: "blood_glucose_concentration",
+}
 
-    HA's statistics API only supports hourly-resolution backdated points —
-    there is no supported way to backdate raw state history at all, and
-    long-term statistics themselves are hard-capped at the hour (confirmed
-    against a real developer's account of hitting this exact wall on HA's
-    own community forum). So this buckets every reading within the hour it
-    actually happened in and re-imports that hour's min/max/mean on every
-    new arrival. `async_import_statistics` upserts by (statistic_id, hour),
-    so calling it repeatedly for the same hour is safe and only ever makes
-    that hour more accurate as more of its readings arrive — it never
-    duplicates or corrupts anything.
+
+def _record_hourly_sample(
+    data: HealthSyncData, metric: str, end: datetime, value: float
+) -> tuple[str, datetime]:
+    """Bucket one latest-value reading (heart rate, HRV, VO2 max, weight,
+    and the 18 Aug 2026 vitals batch) into the hour Apple actually recorded
+    it in — pure bookkeeping on `data.hourly_buckets`, no HA API calls, so
+    it's cheap to call unconditionally for every sample regardless of batch
+    size. Split out from the combined function this used to be (18 Aug
+    2026) so the caller can defer the genuinely expensive part — the actual
+    statistics import, see `_flush_hourly_statistic` — to once per distinct
+    hour touched in a whole webhook payload, rather than once per sample.
+    That distinction barely mattered for live syncing (a handful of samples
+    per sync) but mattered a lot for a History backfill, where dozens of
+    samples routinely land in the same hour and were each independently
+    re-triggering a full statistics import.
 
     Buckets are kept in memory only (not persisted across HA restarts) and
     pruned once they're more than 48h old — a hobby-scale app like this
@@ -575,17 +611,10 @@ def _import_hourly_statistic(
     over long uptimes; a restart mid-hour just means that one hour stops
     getting further refined, which is a minor, self-correcting edge case,
     not a real loss (whatever was already imported stays in HA's history).
-    """
-    if not _STATISTICS_AVAILABLE:
-        return
-    registry = er.async_get(hass)
-    entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{metric}")
-    if entity_id is None:
-        return  # Entity not registered yet — catches up on the next sample.
-    state = hass.states.get(entity_id)
-    if state is None:
-        return
 
+    Returns the (metric, hour_start) bucket key touched, for the caller to
+    collect and flush once the whole payload's samples are all folded in.
+    """
     hour_start = dt_util.as_utc(end).replace(minute=0, second=0, microsecond=0)
     key = (metric, hour_start)
     data.hourly_buckets.setdefault(key, []).append(value)
@@ -594,13 +623,57 @@ def _import_hourly_statistic(
     for stale_key in [k for k in data.hourly_buckets if k[1] < cutoff]:
         del data.hourly_buckets[stale_key]
 
-    values = data.hourly_buckets[key]
+    return key
+
+
+def _flush_hourly_statistic(
+    hass: HomeAssistant,
+    data: HealthSyncData,
+    entry: HealthSyncConfigEntry,
+    metric: str,
+    hour_start: datetime,
+) -> None:
+    """Roll one (metric, hour) bucket's current min/max/mean into Home
+    Assistant's long-term statistics — added 12 Aug 2026 because the
+    sensor's plain state only ever reflects "whatever was last received",
+    collapsing everything that happened between syncs down to a single
+    point timestamped at sync time; split from bucket accumulation 18 Aug
+    2026, see `_record_hourly_sample`.
+
+    HA's statistics API only supports hourly-resolution backdated points —
+    there is no supported way to backdate raw state history at all, and
+    long-term statistics themselves are hard-capped at the hour (confirmed
+    against a real developer's account of hitting this exact wall on HA's
+    own community forum). `async_import_statistics` upserts by
+    (statistic_id, hour), so calling it repeatedly for the same hour is
+    safe and only ever makes that hour more accurate as more of its
+    readings arrive — it never duplicates or corrupts anything, which is
+    exactly what makes it safe to call once per webhook payload instead of
+    once per sample: the result (this hour's true min/max/mean across every
+    sample seen so far) is identical either way, just computed with far
+    fewer redundant calls.
+    """
+    if not _STATISTICS_AVAILABLE:
+        return
+    values = data.hourly_buckets.get((metric, hour_start))
+    if not values:
+        return  # Pruned as stale (>48h old) before this flush ran.
+
+    registry = er.async_get(hass)
+    entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{metric}")
+    if entity_id is None:
+        return  # Entity not registered yet — catches up on the next sample.
+    state = hass.states.get(entity_id)
+    if state is None:
+        return
+
     metadata: StatisticMetaData = {
         "has_sum": False,
         "mean_type": StatisticMeanType.ARITHMETIC,
         "name": None,
         "source": "recorder",
         "statistic_id": entity_id,
+        "unit_class": _HOURLY_STATISTIC_UNIT_CLASSES.get(metric),
         "unit_of_measurement": state.attributes.get("unit_of_measurement"),
     }
     stat: StatisticData = {
