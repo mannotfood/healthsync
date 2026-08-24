@@ -380,6 +380,9 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
         # once per distinct bucket touched here, not once per sample. See
         # `_flush_hourly_statistic`.
         touched_hourly_buckets: set[tuple[str, datetime]] = set()
+        # Same deferred-batching idea as touched_hourly_buckets, for the
+        # readings archive — see ReadingsStore.async_insert_many.
+        readings_to_archive: list[tuple[str, dict[str, Any]]] = []
 
         handled = 0
         for sample in samples:
@@ -492,8 +495,10 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
             if data.readings_store is not None:
                 # Archived exactly as received, for every metric — not just
                 # the four latest-value ones the event entities above cover.
-                # This is the complete, unaveraged record; see db.py.
-                await data.readings_store.async_insert(metric, sample)
+                # This is the complete, unaveraged record; see db.py. Queued
+                # rather than written immediately — see readings_to_archive
+                # above and ReadingsStore.async_insert_many.
+                readings_to_archive.append((metric, sample))
             if metric in LATEST_VALUE_METRICS:
                 # Independent of _ingest_sample's out-of-order guard (which
                 # only protects the *live* "current value" sensor) — every
@@ -552,6 +557,9 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
         # into `data.hourly_buckets` above — see _flush_hourly_statistic.
         for touched_metric, touched_hour in touched_hourly_buckets:
             _flush_hourly_statistic(hass, data, entry, touched_metric, touched_hour)
+
+        if data.readings_store is not None and readings_to_archive:
+            await data.readings_store.async_insert_many(readings_to_archive)
 
         if handled == 0 and samples:
             # Everything was a duplicate — still fine, still 200.

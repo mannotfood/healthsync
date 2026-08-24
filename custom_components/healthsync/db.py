@@ -218,6 +218,62 @@ class ReadingsStore:
                 ),
             )
 
+    async def async_insert_many(self, rows: list[tuple[str, dict[str, Any]]]) -> None:
+        """Archives many samples in one transaction — same best-effort
+        contract as `async_insert` (never allowed to break the webhook).
+        Added 23 Aug 2026: `handle_webhook` used to call `async_insert` once
+        per sample, meaning one `async_add_executor_job` thread-pool
+        dispatch *and* one SQLite commit per sample. For a full-history
+        backfill's normal 500-sample webhook POST, that's 500 separate round
+        trips and 500 separate commits, serialized one after another through
+        `_lock` — the actual dominant cost of a big backfill once the
+        webhook request-count problem itself was fixed on the app side
+        (`WebhookClient` sending concurrently, 23 Aug 2026). Collecting a
+        whole payload's samples and writing them in a single `executemany`
+        inside one transaction cuts that to one round trip and one commit
+        regardless of batch size.
+        """
+        if not rows:
+            return
+        try:
+            async with self._lock:
+                await self._hass.async_add_executor_job(self._insert_many, rows)
+        except Exception:  # noqa: BLE001
+            _LOGGER.exception("HealthSync: failed to archive %d readings", len(rows))
+
+    def _insert_many(self, rows: list[tuple[str, dict[str, Any]]]) -> None:
+        if self._conn is None:
+            raise RuntimeError("ReadingsStore used before async_setup")
+        params = [
+            (
+                self._entry_id,
+                metric,
+                sample.get("value"),
+                sample.get("sleep_stage"),
+                sample.get("unit"),
+                sample.get("start_date"),
+                sample.get("end_date"),
+                _parse_epoch(sample.get("start_date")),
+                sample.get("source"),
+                sample.get("daily_total"),
+                sample.get("workout_type"),
+                sample.get("distance"),
+                json.dumps({k: v for k, v in sample.items() if k != "secret"}),
+            )
+            for metric, sample in rows
+        ]
+        with self._conn:
+            self._conn.executemany(
+                """
+                INSERT OR IGNORE INTO readings
+                    (entry_id, metric, value, sleep_stage, unit, start_date,
+                     end_date, start_epoch, source, daily_total, workout_type,
+                     distance, raw_payload)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                params,
+            )
+
     async def async_query(
         self,
         metric: str,

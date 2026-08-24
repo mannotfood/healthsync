@@ -95,7 +95,7 @@ cards:
       type: custom:apexcharts-card
       graph_span: >-
         ${ ({"Last 24 Hours":"24h","Last 7 Days":"7d","Last 30 Days":"30d",
-             "Last 90 Days":"90d","Last Year":"365d","All Time":"1500d"})[RANGE_LABEL] }
+             "Last 90 Days":"90d","Last Year":"365d","All Time":"36500d"})[RANGE_LABEL] }
       header:
         show: true
         title: HealthSync History
