@@ -1,3 +1,19 @@
+get_webhook_url:
+  name: Get webhook URL
+  description: >-
+    Returns the current cloud (Nabu Casa) and local webhook URLs for a
+    HealthSync device — useful any time after the one-time setup
+    notification has been dismissed, e.g. to get the local LAN URL for
+    testing without going through Nabu Casa's relay.
+  fields:
+    device_id:
+      name: Device
+      description: The HealthSync device to look up.
+      required: true
+      selector:
+        device:
+          integration: healthsync
+
 get_readings:
   name: Get readings
   description: >-

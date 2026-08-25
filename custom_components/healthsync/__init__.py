@@ -72,6 +72,7 @@ from .const import (
     OPT_WEBHOOK_NOTIFIED,
     QUANTITY_METRICS,
     SERVICE_GET_READINGS,
+    SERVICE_GET_WEBHOOK_URL,
     SIGNAL_METRIC_READING,
     SIGNAL_UPDATE,
     SIGNAL_WORKOUT,
@@ -189,6 +190,8 @@ class HealthSyncData:
         return True
 
 
+GET_WEBHOOK_URL_SCHEMA = vol.Schema({vol.Required("device_id"): cv.string})
+
 GET_READINGS_SCHEMA = vol.Schema(
     {
         vol.Required("device_id"): cv.string,
@@ -232,11 +235,46 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         readings = await store.async_query(metric, start, end)
         return {"readings": readings, "count": len(readings)}
 
+    async def _async_handle_get_webhook_url(call: ServiceCall) -> ServiceResponse:
+        device_id = call.data["device_id"]
+
+        device = dr.async_get(hass).async_get(device_id)
+        if device is None:
+            raise ServiceValidationError(f"Unknown device: {device_id}")
+
+        entry_id = next(iter(device.config_entries), None)
+        entry = hass.config_entries.async_get_entry(entry_id) if entry_id else None
+        if entry is None or entry.domain != DOMAIN:
+            raise ServiceValidationError("That device isn't a HealthSync device")
+
+        webhook_id = entry.data[CONF_WEBHOOK_ID]
+
+        # Same two URLs `async_setup_entry` computes at startup for the
+        # one-time notification — recomputed here rather than cached, so
+        # this always reflects the *current* cloud/local reachability
+        # rather than whatever happened to be true at last HA restart.
+        cloud_url: str | None = None
+        if cloud.async_active_subscription(hass):
+            try:
+                cloud_url = await cloud.async_get_or_create_cloudhook(hass, webhook_id)
+            except cloud.CloudNotAvailable:
+                cloud_url = None
+        local_url = webhook.async_generate_url(hass, webhook_id, prefer_external=False)
+
+        return {"cloud_url": cloud_url, "local_url": local_url}
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_GET_READINGS,
         _async_handle_get_readings,
         schema=GET_READINGS_SCHEMA,
+        supports_response=SupportsResponse.ONLY,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_GET_WEBHOOK_URL,
+        _async_handle_get_webhook_url,
+        schema=GET_WEBHOOK_URL_SCHEMA,
         supports_response=SupportsResponse.ONLY,
     )
     return True

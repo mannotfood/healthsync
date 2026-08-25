@@ -148,6 +148,16 @@ MAX_RECENT_WORKOUTS = 10
 # optionally bounded to a date range. Registered once for the whole domain
 # (see async_setup in __init__.py), not per config entry.
 SERVICE_GET_READINGS = "get_readings"
+# healthsync.get_webhook_url — added 25 Aug 2026. The webhook URL is only
+# ever shown once, in a one-time persistent notification at first setup
+# (see OPT_WEBHOOK_NOTIFIED) — there was no way to see it again afterward,
+# which matters more than it sounds like: the cloudhook token Nabu Casa
+# mints is a different string from the underlying local webhook_id, so
+# someone who wants their LAN URL (e.g. to test without going through Nabu
+# Casa's relay) previously had no way to get it at all once the one-time
+# notification was dismissed. Registered once for the whole domain, same
+# pattern as SERVICE_GET_READINGS.
+SERVICE_GET_WEBHOOK_URL = "get_webhook_url"
 # Every metric a reading can legitimately be archived under — built from the
 # same sets the rest of the integration already uses, so this can't drift
 # out of sync with what _ingest_sample actually accepts.
