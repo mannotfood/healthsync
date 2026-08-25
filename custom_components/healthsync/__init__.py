@@ -559,7 +559,42 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
             _flush_hourly_statistic(hass, data, entry, touched_metric, touched_hour)
 
         if data.readings_store is not None and readings_to_archive:
-            await data.readings_store.async_insert_many(readings_to_archive)
+            # Fire-and-forget, not awaited — added 25 Aug 2026. Root cause of
+            # a real regression: `async_insert_many` (db.py) serializes every
+            # call through one global `asyncio.Lock` (added 16 Aug to stop
+            # concurrent writers corrupting SQLite), and this call used to be
+            # awaited *before* the webhook's HTTP response went out. That
+            # meant every one of the app's now-concurrent POSTs (`WebhookClient`,
+            # up to 5 at once as of 23 Aug) actually queued behind this same
+            # lock one at a time anyway — the concurrency the app pays for
+            # bought nothing, because each request's full round trip (from
+            # the app's point of view) included waiting its turn for a lock
+            # plus a SQLite write, not just network time. Measured as a real
+            # backfill regression: ~1-3 500-sample chunks/sec before this was
+            # actually exercised end-to-end, down to one chunk per ~10s once
+            # it was.
+            #
+            # Scheduling the write instead of awaiting it lets `handle_webhook`
+            # return as soon as the payload's parsed, so concurrent requests
+            # from the app are no longer serialized on each other's DB write —
+            # each just schedules its own task and returns. The lock in
+            # db.py still fully serializes the *actual* writes (correctness
+            # unchanged, SQLite still only ever has one writer at a time),
+            # but that no longer blocks the HTTP response, so it no longer
+            # blocks the next request from being accepted either.
+            #
+            # Trade-off, deliberately accepted: a request now reports success
+            # once queued, not once durably written — a HA crash/restart in
+            # the small window between "queued" and "actually committed"
+            # could lose that batch. Same risk class as normal OS write
+            # buffering, and already covered by the same safety net the rest
+            # of this design leans on: HA-side dedup (the replay key above,
+            # and db.py's own unique index) makes the app simply resending
+            # that batch on its next sync completely harmless.
+            hass.async_create_task(
+                data.readings_store.async_insert_many(readings_to_archive),
+                name="healthsync_archive_insert",
+            )
 
         if handled == 0 and samples:
             # Everything was a duplicate — still fine, still 200.
