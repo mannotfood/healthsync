@@ -8,6 +8,7 @@ entities. Local push only — no polling, no cloud.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from http import HTTPStatus
@@ -40,7 +41,7 @@ if TYPE_CHECKING:
 # fails to load".
 try:
     from homeassistant.components.recorder.models import StatisticMeanType
-    from homeassistant.components.recorder.statistics import async_import_statistics
+    from homeassistant.components.recorder.statistics import async_add_external_statistics
 
     _STATISTICS_AVAILABLE = True
 except ImportError:
@@ -80,6 +81,11 @@ from .const import (
 from .db import ReadingsStore
 
 _LOGGER = logging.getLogger(__name__)
+
+# camelCase metric key -> snake_case, for external statistic ids
+# ("heartRate" -> "heart_rate"). Same split regex sensor.py uses for
+# display names.
+_CAMEL_TO_SNAKE = re.compile(r"(?<!^)(?=[A-Z])")
 
 PLATFORMS = ["sensor", "event"]
 
@@ -139,6 +145,13 @@ class HealthSyncData:
     # rather than all MAX_RECENT_WORKOUTS at once, and are never removed —
     # this just tracks how far that progressive creation has gotten.
     workout_slots_created: int = 0
+    # Device registry id of the main "HealthSync" device, resolved once in
+    # `async_setup_entry` (added 8 Sep 2026, replacing the deprecated
+    # `via_device=(DOMAIN, entry.entry_id)` identifiers-tuple form — HA's
+    # device registry now wants the actual device id via `via_device_id`).
+    # Read by every `HealthSyncWorkoutSensor` to link the "HealthSync
+    # Workouts" device back to this one.
+    workout_via_device_id: str | None = None
     # Per-(metric, hour) accumulator of every latest-value reading (heart
     # rate, HRV, VO2 max, weight) seen so far this hour, keyed by the hour
     # it actually happened in (Apple's own timestamp, not sync time) —
@@ -725,14 +738,42 @@ def _flush_hourly_statistic(
     there is no supported way to backdate raw state history at all, and
     long-term statistics themselves are hard-capped at the hour (confirmed
     against a real developer's account of hitting this exact wall on HA's
-    own community forum). `async_import_statistics` upserts by
-    (statistic_id, hour), so calling it repeatedly for the same hour is
-    safe and only ever makes that hour more accurate as more of its
-    readings arrive — it never duplicates or corrupts anything, which is
-    exactly what makes it safe to call once per webhook payload instead of
-    once per sample: the result (this hour's true min/max/mean across every
-    sample seen so far) is identical either way, just computed with far
-    fewer redundant calls.
+    own community forum). The import upserts by (statistic_id, hour), so
+    calling it repeatedly for the same hour is safe and only ever makes
+    that hour more accurate as more of its readings arrive — it never
+    duplicates or corrupts anything, which is exactly what makes it safe
+    to call once per webhook payload instead of once per sample: the
+    result (this hour's true min/max/mean across every sample seen so far)
+    is identical either way, just computed with far fewer redundant calls.
+
+    IMPORTANT — external statistics only (changed 11 Sep 2026, v0.21.0,
+    fixing a serious field report): this used to call
+    `async_import_statistics` with `statistic_id = <the sensor's own
+    entity_id>` and `source: "recorder"`. That collides with the recorder
+    itself: these sensors carry `state_class: MEASUREMENT`, so the
+    recorder *also* compiles its own hourly statistics row for the same
+    entity — and because we import the in-progress hour as samples arrive,
+    our row usually lands first. When the recorder's own hourly
+    compilation then ran (~HH:00:12), its INSERT for the same
+    (metadata_id, start_ts) hit the UNIQUE constraint
+    (`sqlite3.IntegrityError` / "Blocked attempt to insert duplicated
+    statistic rows"), and — much worse — the failed transaction took the
+    *whole* hourly statistics run down with it, leaving gaps in completely
+    unrelated entities' long-term statistics (reported as visible holes in
+    a user's Energy Dashboard). Two writers, one primary key.
+
+    The fix is the pattern integrations that backdate data (Opower,
+    Tibber, ...) all use: external statistics via
+    `async_add_external_statistics`, under our own
+    `healthsync:<entry>_<metric>` ids with `source: DOMAIN`. The recorder
+    never compiles external statistics, so there is no second writer and
+    nothing to collide with — the sensors' own recorder-compiled
+    statistics continue independently (receipt-timestamped, as any normal
+    sensor's are), and the accurately-dated hourly series lives under the
+    external id, selectable by name in any Statistics Graph card. For
+    users already bitten: nothing keeps writing entity-id rows after this
+    version, so the conflicts stop on their own once the last
+    already-imported hour rolls past — no database surgery needed.
     """
     if not _STATISTICS_AVAILABLE:
         return
@@ -740,6 +781,9 @@ def _flush_hourly_statistic(
     if not values:
         return  # Pruned as stale (>48h old) before this flush ran.
 
+    # The entity itself is only consulted for its unit and friendly name
+    # (and as a "this metric actually has a sensor" gate) — the statistic
+    # is deliberately NOT recorded under the entity's id, see above.
     registry = er.async_get(hass)
     entity_id = registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_{metric}")
     if entity_id is None:
@@ -748,12 +792,16 @@ def _flush_hourly_statistic(
     if state is None:
         return
 
+    statistic_id = f"{DOMAIN}:{entry.entry_id}_{_CAMEL_TO_SNAKE.sub('_', metric).lower()}"
+    friendly = state.attributes.get("friendly_name") or entity_id
     metadata: StatisticMetaData = {
         "has_sum": False,
         "mean_type": StatisticMeanType.ARITHMETIC,
-        "name": None,
-        "source": "recorder",
-        "statistic_id": entity_id,
+        # "(hourly history)" so it's distinguishable from the entity's own
+        # recorder-compiled statistics in the statistics pickers.
+        "name": f"{friendly} (hourly history)",
+        "source": DOMAIN,
+        "statistic_id": statistic_id,
         "unit_class": _HOURLY_STATISTIC_UNIT_CLASSES.get(metric),
         "unit_of_measurement": state.attributes.get("unit_of_measurement"),
     }
@@ -764,9 +812,9 @@ def _flush_hourly_statistic(
         "mean": sum(values) / len(values),
     }
     try:
-        async_import_statistics(hass, metadata, [stat])
+        async_add_external_statistics(hass, metadata, [stat])
     except Exception:  # noqa: BLE001 — best-effort; a bad import must never break the webhook.
-        _LOGGER.exception("HealthSync: failed to import hourly statistic for %s", entity_id)
+        _LOGGER.exception("HealthSync: failed to import hourly statistic %s", statistic_id)
 
 
 def _ingest_sample(

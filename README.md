@@ -72,14 +72,25 @@ across a long gap (e.g. overnight). That's the default Home Assistant view
 being low-resolution, not a broken integration — the accurate hourly data
 is there regardless, in the statistics store.
 
-To actually see it, add a **Statistics Graph** card to a dashboard,
-pointed at the entity, e.g.:
+Since v0.21.0 this accurate hourly series is stored as **external
+statistics** under HealthSync's own statistic ids
+(`healthsync:<entry>_heart_rate` and so on) rather than under the
+sensor's entity id. (Earlier versions wrote into the sensors' own
+statistics, which could collide with Home Assistant's recorder compiling
+the same hour and break that hour's statistics run for unrelated
+entities — see the changelog for v0.21.0.)
+
+To see it, add a **Statistics Graph** card to a dashboard and pick the
+statistic named after the sensor with an "(hourly history)" suffix —
+e.g. "HealthSync Heart rate (hourly history)" — from the card editor's
+picker. In YAML it looks like this (the id contains your config entry's
+internal id; easiest to select it in the visual editor):
 
 ```yaml
 type: statistics-graph
 title: Heart rate
 entities:
-  - sensor.healthsync_heart_rate
+  - healthsync:1a2b3c4d5e6f_heart_rate
 stat_types:
   - min
   - mean
@@ -88,9 +99,10 @@ period:
   hour: 1
 ```
 
-Swap the entity for HRV, VO2 max, or weight as needed (adjust `-` naming
-to match your actual entity IDs, and add `(Name)` suffixes if you've set
-up more than one family member).
+Swap in HRV, VO2 max, weight, or any of the other vitals as needed. The
+plain sensor entities still get Home Assistant's normal automatic
+statistics too — those are timestamped at sync time, so prefer the
+"(hourly history)" statistics when accuracy of *when* matters.
 
 ### Reducing Logbook noise
 
