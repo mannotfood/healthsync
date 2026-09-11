@@ -90,7 +90,10 @@ class WorkoutCompletedEvent(EventEntity):
         self._entry = entry
         self._data = data
         self._attr_unique_id = f"{entry.entry_id}_workout_completed"
-        self._attr_device_info = workout_device_info(entry)
+        # Second argument added 11 Sep 2026 with the via_device_id
+        # migration — the id is resolved in __init__.py before platforms
+        # are forwarded, so it's always set by the time this runs.
+        self._attr_device_info = workout_device_info(entry, data.workout_via_device_id)
         # Icon matches whichever activity fired most recently (added
         # 12 Aug 2026) rather than one fixed icon for every workout type —
         # see WORKOUT_TYPE_ICONS. Starts at the generic fallback until the

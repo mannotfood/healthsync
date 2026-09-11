@@ -13,6 +13,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import UnitOfLength, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.device_registry import DeviceEntryType, DeviceInfo
 from homeassistant.helpers.dispatcher import async_dispatcher_connect
@@ -103,6 +104,14 @@ async def async_setup_entry(
         stale = registry.async_get_entity_id("sensor", DOMAIN, old_unique_id)
         if stale:
             registry.async_remove(stale)
+
+    # `data.workout_via_device_id` (the main device's registry id, needed
+    # by `workout_device_info` below in place of the deprecated
+    # `via_device` tuple) is resolved in `__init__.py`'s async_setup_entry
+    # BEFORE any platform is forwarded — not here, because the event
+    # platform is set up concurrently with this one and needs it too. See
+    # the comment there (11 Sep 2026, completing the 8 Sep attempt that
+    # resolved it here and left event.py racing/broken).
 
     async_add_entities(
         [
@@ -262,12 +271,18 @@ def main_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
     )
 
 
-def workout_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
+def workout_device_info(entry: HealthSyncConfigEntry, via_device_id: str | None) -> DeviceInfo:
     """Workouts get their own device (added 11 Aug 2026) — there's enough
     workout-specific data (type, duration, distance, calories, history) that
     lumping it into the single flat HealthSync device got crowded. Linked via
-    `via_device` so it still shows as related to the main HealthSync device
-    in the UI rather than as an unrelated integration.
+    `via_device_id` (the main device's actual registry id, resolved once in
+    `async_setup_entry` and stashed on `HealthSyncData` — switched 8 Sep 2026
+    from the deprecated `via_device=(DOMAIN, entry.entry_id)` identifiers-tuple
+    form) so it still shows as related to the main HealthSync device in the
+    UI rather than as an unrelated integration. `via_device_id` is only ever
+    `None` if `async_setup_entry` hasn't run yet, which shouldn't happen in
+    practice — HA always resolves the main device before any workout sensor
+    can be constructed.
     """
     return DeviceInfo(
         identifiers={(DOMAIN, f"{entry.entry_id}_workouts")},
@@ -275,7 +290,7 @@ def workout_device_info(entry: HealthSyncConfigEntry) -> DeviceInfo:
         manufacturer="HealthSync",
         model="Apple Health bridge",
         entry_type=DeviceEntryType.SERVICE,
-        via_device=(DOMAIN, entry.entry_id),
+        via_device_id=via_device_id,
     )
 
 
@@ -311,7 +326,7 @@ class HealthSyncWorkoutSensor(HealthSyncSensor):
 
     def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
         super().__init__(entry, data)
-        self._attr_device_info = workout_device_info(entry)
+        self._attr_device_info = workout_device_info(entry, data.workout_via_device_id)
 
 
 class DailyTotalSensor(HealthSyncSensor, RestoreSensor):

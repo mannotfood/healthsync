@@ -333,6 +333,27 @@ async def async_setup_entry(hass: HomeAssistant, entry: HealthSyncConfigEntry) -
         async_track_time_change(hass, _midnight_reset, hour=0, minute=0, second=0)
     )
 
+    # Resolve (creating if needed) the main "HealthSync" device up front so
+    # its registry id is available for `via_device_id` on the workout
+    # device — replacing the deprecated `via_device=(DOMAIN, ...)`
+    # identifiers-tuple form (HA device-registry follow-up deprecations,
+    # Aug 2026; removal slated for Core 2027.8). Deliberately done HERE,
+    # before the platforms are forwarded, rather than inside sensor.py's
+    # async_setup_entry (where the 8 Sep 2026 first attempt put it): the
+    # sensor and event platforms are set up concurrently, and the event
+    # platform's workout entity needs this id too — resolving it in only
+    # one platform left the other racing it. Idempotent with the implicit
+    # get-or-create every entity's device_info triggers later — same
+    # identifiers, so it returns the same device rather than creating a
+    # second one. Local import to avoid a module-level circular import
+    # (sensor.py imports from this package).
+    from .sensor import main_device_info
+
+    main_device = dr.async_get(hass).async_get_or_create(
+        config_entry_id=entry.entry_id, **main_device_info(entry)
+    )
+    data.workout_via_device_id = main_device.id
+
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     # One-time pointer to the webhook URL the user needs to paste into the
