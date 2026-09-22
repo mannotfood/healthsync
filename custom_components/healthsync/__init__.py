@@ -767,6 +767,24 @@ def _flush_hourly_statistic(
     result (this hour's true min/max/mean across every sample seen so far)
     is identical either way, just computed with far fewer redundant calls.
 
+    IMPORTANT — statistic_id must be lowercased (fixed 15 Sep 2026, v0.21.2,
+    scheduled pipeline check): `entry.entry_id` isn't guaranteed to already
+    be lowercase — HA has generated ULID-format entry ids (uppercase
+    Crockford base32, e.g. `01M0DY5WYRRJP7SW9ZKY79M1PA`) for a while now,
+    and this integration's own config entries are apparently created that
+    way. `async_add_external_statistics` validates `statistic_id` against
+    `^(?!.+__)[a-z0-9_]+:[a-z0-9_]+$` — no uppercase allowed on either side
+    of the colon — so building the id from an uppercase entry_id raised
+    `HomeAssistantError: Invalid statistic_id` on every single hourly flush
+    for this user's install (106 occurrences in the log, one per metric per
+    hour, silently swallowed by the `except Exception` below — best-effort
+    by design, so it never broke the live sensors or the webhook, it just
+    meant the "(hourly history)" external statistics series never actually
+    recorded anything for them). `entity_id`/`unique_id` values built from
+    the same `entry.entry_id` elsewhere in this file are unaffected — HA
+    slugifies/accepts those regardless of case, only `statistic_id` is
+    fussy about it.
+
     IMPORTANT — external statistics only (changed 11 Sep 2026, v0.21.0,
     fixing a serious field report): this used to call
     `async_import_statistics` with `statistic_id = <the sensor's own
@@ -813,7 +831,7 @@ def _flush_hourly_statistic(
     if state is None:
         return
 
-    statistic_id = f"{DOMAIN}:{entry.entry_id}_{_CAMEL_TO_SNAKE.sub('_', metric).lower()}"
+    statistic_id = f"{DOMAIN}:{entry.entry_id.lower()}_{_CAMEL_TO_SNAKE.sub('_', metric).lower()}"
     friendly = state.attributes.get("friendly_name") or entity_id
     metadata: StatisticMetaData = {
         "has_sum": False,
