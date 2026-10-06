@@ -30,6 +30,7 @@ from . import HealthSyncConfigEntry, HealthSyncData
 from .const import (
     METRIC_HEART_RATE,
     METRIC_HRV,
+    METRIC_SLEEP_BREATHING_DISTURBANCES,
     METRIC_VO2_MAX,
     METRIC_WEIGHT,
     SIGNAL_METRIC_READING,
@@ -47,6 +48,12 @@ READING_METRICS = (
     (METRIC_HRV, "Heart rate variability reading", "mdi:heart-flash"),
     (METRIC_VO2_MAX, "VO2 max reading", "mdi:lungs"),
     (METRIC_WEIGHT, "Weight reading", "mdi:scale-bathroom"),
+    # Added 6 Oct 2026 (GitHub #22) — every individual Breathing
+    # Disturbances reading, same unconditional relay every other metric
+    # above gets. The apnea-specific, classification-gated event the
+    # GitHub issue actually asked for is BreathingDisturbancesElevatedEvent
+    # below, not this one.
+    (METRIC_SLEEP_BREATHING_DISTURBANCES, "Breathing disturbances reading", "mdi:lungs"),
 )
 
 
@@ -64,6 +71,7 @@ async def async_setup_entry(
                 MetricReadingEvent(entry, data, metric, name, icon)
                 for metric, name, icon in READING_METRICS
             ),
+            BreathingDisturbancesElevatedEvent(entry, data),
         ]
     )
 
@@ -178,6 +186,65 @@ class MetricReadingEvent(EventEntity):
             {
                 "value": sample.get("value"),
                 "unit": sample.get("unit"),
+                "start_date": sample.get("start_date"),
+                "end_date": sample.get("end_date"),
+            },
+        )
+        self.async_write_ha_state()
+
+
+class BreathingDisturbancesElevatedEvent(EventEntity):
+    """Fires once per night that Apple's own HealthKit classification
+    (`HKAppleSleepingBreathingDisturbancesClassificationForQuantity`) calls
+    "elevated" — added 6 Oct 2026, answering GitHub #22's request for
+    "event entities for individual apnea-related events/notifications".
+
+    This is deliberately gated on Apple's own classification string alone
+    (`breathing_disturbances_classification == "elevated"`, sent by the iOS
+    app exactly as HealthKit returned it) — never a cutoff this integration
+    picked. A night HealthKit calls "notElevated" never fires this event at
+    all, same as MetricReadingEvent fires for every reading regardless of
+    value; the gate is what makes this entity meaningfully different from
+    (and additional to) the unconditional "Breathing disturbances reading"
+    event above. The published threshold the night was measured against
+    rides in the event data alongside the raw value, so the classification
+    is always auditable against the actual number.
+    """
+
+    _attr_has_entity_name = True
+    _attr_should_poll = False
+    _attr_name = "Breathing disturbances elevated"
+    _attr_icon = "mdi:lungs"
+    _attr_event_types = ["elevated"]
+
+    def __init__(self, entry: HealthSyncConfigEntry, data: HealthSyncData) -> None:
+        self._entry = entry
+        self._data = data
+        self._attr_unique_id = f"{entry.entry_id}_breathing_disturbances_elevated"
+        self._attr_device_info = main_device_info(entry)
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        self.async_on_remove(
+            async_dispatcher_connect(
+                self.hass,
+                SIGNAL_METRIC_READING.format(entry_id=self._entry.entry_id),
+                self._handle_reading,
+            )
+        )
+
+    @callback
+    def _handle_reading(self, metric: str, sample: dict[str, Any]) -> None:
+        if metric != METRIC_SLEEP_BREATHING_DISTURBANCES:
+            return
+        if sample.get("breathing_disturbances_classification") != "elevated":
+            return
+        self._trigger_event(
+            "elevated",
+            {
+                "value": sample.get("value"),
+                "unit": sample.get("unit"),
+                "elevated_threshold": sample.get("breathing_disturbances_threshold"),
                 "start_date": sample.get("start_date"),
                 "end_date": sample.get("end_date"),
             },

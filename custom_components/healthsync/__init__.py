@@ -66,6 +66,7 @@ from .const import (
     METRIC_HEIGHT,
     METRIC_LEAN_BODY_MASS,
     METRIC_SLEEP,
+    METRIC_SLEEP_BREATHING_DISTURBANCES,
     METRIC_TEST,
     METRIC_WAIST_CIRCUMFERENCE,
     METRIC_WEIGHT,
@@ -105,6 +106,16 @@ class HealthSyncData:
     # End date of the newest sample seen per metric, to ignore out-of-order
     # deliveries (the app re-sends whole batches after a failed sync).
     latest_end: dict[str, datetime] = field(default_factory=dict)
+    # Apple's own elevated/not-elevated call
+    # (HKAppleSleepingBreathingDisturbancesClassificationForQuantity) for the
+    # most recent Breathing Disturbances night, plus the published threshold
+    # (events/hour) it was measured against — added 6 Oct 2026 (GitHub #22).
+    # Deliberately Apple's own classification/constant, never a cutoff this
+    # integration computed itself, per Jamie's no-data-manipulation
+    # requirement. Populated from both the snapshot block and the anchored
+    # stream below, same as latest_values.
+    breathing_disturbances_classification: str | None = None
+    breathing_disturbances_threshold: float | None = None
     # Most recent sleep stage + its sample window.
     sleep_stage: str | None = None
     sleep_start: datetime | None = None
@@ -507,6 +518,13 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
                     end = _parse_date(sample.get("end_date"))
                     if end:
                         data.latest_end[metric] = end
+                if metric == METRIC_SLEEP_BREATHING_DISTURBANCES:
+                    classification = sample.get("breathing_disturbances_classification")
+                    if isinstance(classification, str):
+                        data.breathing_disturbances_classification = classification
+                    threshold = sample.get("breathing_disturbances_threshold")
+                    if isinstance(threshold, (int, float)):
+                        data.breathing_disturbances_threshold = float(threshold)
                 data.last_sync = dt_util.utcnow()
                 handled += 1
                 continue
@@ -572,6 +590,13 @@ def _make_webhook_handler(entry: HealthSyncConfigEntry):
                 # above and ReadingsStore.async_insert_many.
                 readings_to_archive.append((metric, sample))
             if metric in LATEST_VALUE_METRICS:
+                if metric == METRIC_SLEEP_BREATHING_DISTURBANCES:
+                    classification = sample.get("breathing_disturbances_classification")
+                    if isinstance(classification, str):
+                        data.breathing_disturbances_classification = classification
+                    threshold = sample.get("breathing_disturbances_threshold")
+                    if isinstance(threshold, (int, float)):
+                        data.breathing_disturbances_threshold = float(threshold)
                 # Independent of _ingest_sample's out-of-order guard (which
                 # only protects the *live* "current value" sensor) — every
                 # sample, in whatever order it arrives, belongs in its own
