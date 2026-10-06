@@ -44,6 +44,7 @@ from .const import (
     METRIC_RESPIRATORY_RATE,
     METRIC_RESTING_ENERGY,
     METRIC_RESTING_HEART_RATE,
+    METRIC_SLEEP_BREATHING_DISTURBANCES,
     METRIC_STEPS,
     METRIC_VO2_MAX,
     METRIC_WAIST_CIRCUMFERENCE,
@@ -184,6 +185,15 @@ async def async_setup_entry(
             LatestValueSensor(
                 entry, data, METRIC_WAIST_CIRCUMFERENCE, "Waist circumference", "m", "mdi:tape-measure",
                 device_class=SensorDeviceClass.DISTANCE,
+            ),
+            # Added 6 Oct 2026 — requested via GitHub #22. Same generic
+            # LatestValueSensor pattern as everything above. Apple's own
+            # "Breathing Disturbances" quantity (events/hour), relayed
+            # unmodified — no device_class fits this well in HA core, so
+            # left unset like respiratory rate/AFib burden above.
+            LatestValueSensor(
+                entry, data, METRIC_SLEEP_BREATHING_DISTURBANCES, "Breathing disturbances", "/hr",
+                "mdi:lungs",
             ),
             # Added 12 Aug 2026 — same generic DailyTotalSensor/
             # LatestValueSensor classes as everything above, just more of

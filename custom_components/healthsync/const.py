@@ -56,6 +56,16 @@ METRIC_BODY_FAT_PERCENTAGE = "bodyFatPercentage"
 METRIC_LEAN_BODY_MASS = "leanBodyMass"
 METRIC_HEIGHT = "height"
 METRIC_WAIST_CIRCUMFERENCE = "waistCircumference"
+# Added 6 Oct 2026, requested via GitHub #22. Apple's "Breathing
+# Disturbances" (BD) quantity, the same metric behind Apple Watch's
+# Sleep Apnea notifications — relayed read-only/unmodified like every
+# other metric; HealthKit has no separate public type for the sleep
+# apnea event/notification itself, just this quantity plus Apple's own
+# elevated/not-elevated classification function, so this is the whole
+# of what the iOS app can offer. Only available from iOS 18 on the app
+# side (see HealthMetricType.swift) — a pre-18 install simply never
+# sends this metric, same generic quantity-metric pipeline either way.
+METRIC_SLEEP_BREATHING_DISTURBANCES = "sleepBreathingDisturbances"
 METRIC_TEST = "test_connection"
 
 QUANTITY_METRICS = {
@@ -84,6 +94,7 @@ QUANTITY_METRICS = {
     METRIC_LEAN_BODY_MASS,
     METRIC_HEIGHT,
     METRIC_WAIST_CIRCUMFERENCE,
+    METRIC_SLEEP_BREATHING_DISTURBANCES,
 }
 # Metrics accumulated into a daily total (the app sends incremental samples,
 # not running totals).
@@ -103,7 +114,7 @@ LATEST_VALUE_METRICS = {
     METRIC_HEART_RATE_RECOVERY, METRIC_AFIB_BURDEN, METRIC_OXYGEN_SATURATION,
     METRIC_RESPIRATORY_RATE, METRIC_BODY_TEMPERATURE, METRIC_BLOOD_GLUCOSE,
     METRIC_BODY_MASS_INDEX, METRIC_BODY_FAT_PERCENTAGE, METRIC_LEAN_BODY_MASS,
-    METRIC_HEIGHT, METRIC_WAIST_CIRCUMFERENCE,
+    METRIC_HEIGHT, METRIC_WAIST_CIRCUMFERENCE, METRIC_SLEEP_BREATHING_DISTURBANCES,
 }
 
 SLEEP_STAGES = [
