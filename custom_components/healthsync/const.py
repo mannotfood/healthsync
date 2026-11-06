@@ -66,6 +66,18 @@ METRIC_WAIST_CIRCUMFERENCE = "waistCircumference"
 # side (see HealthMetricType.swift) — a pre-18 install simply never
 # sends this metric, same generic quantity-metric pipeline either way.
 METRIC_SLEEP_BREATHING_DISTURBANCES = "sleepBreathingDisturbances"
+# Added 3 Nov 2026, requested via GitHub #26. Apple Watch sleep wrist
+# temperature -- a distinct HealthKit type from bodyTemperature above,
+# reported as a delta from the wearer's own baseline. Same generic
+# quantity-metric pipeline as everything else here.
+METRIC_WRIST_TEMPERATURE = "wristTemperature"
+# Added 3 Nov 2026, requested via GitHub #27. HealthKit's third Activity
+# ring (Stand) -- unlike every other DAILY_TOTAL_METRICS entry this is
+# backed by a category type on the iOS side (HKCategoryTypeIdentifier
+# .appleStandHour), not a quantity, but the wire format and HA-side
+# handling here are identical: a plain numeric daily_total snapshot, so
+# no special-casing is needed in this file or _ingest_sample.
+METRIC_STAND_HOURS = "standHours"
 METRIC_TEST = "test_connection"
 
 QUANTITY_METRICS = {
@@ -95,6 +107,8 @@ QUANTITY_METRICS = {
     METRIC_HEIGHT,
     METRIC_WAIST_CIRCUMFERENCE,
     METRIC_SLEEP_BREATHING_DISTURBANCES,
+    METRIC_WRIST_TEMPERATURE,
+    METRIC_STAND_HOURS,
 }
 # Metrics accumulated into a daily total (the app sends incremental samples,
 # not running totals).
@@ -105,6 +119,7 @@ DAILY_TOTAL_METRICS = {
     METRIC_EXERCISE_TIME,
     METRIC_RESTING_ENERGY,
     METRIC_DISTANCE,
+    METRIC_STAND_HOURS,
 }
 # Metrics whose state is just "the most recent sample" (a discrete,
 # infrequent reading) rather than a running daily total.
@@ -115,6 +130,7 @@ LATEST_VALUE_METRICS = {
     METRIC_RESPIRATORY_RATE, METRIC_BODY_TEMPERATURE, METRIC_BLOOD_GLUCOSE,
     METRIC_BODY_MASS_INDEX, METRIC_BODY_FAT_PERCENTAGE, METRIC_LEAN_BODY_MASS,
     METRIC_HEIGHT, METRIC_WAIST_CIRCUMFERENCE, METRIC_SLEEP_BREATHING_DISTURBANCES,
+    METRIC_WRIST_TEMPERATURE,
 }
 
 SLEEP_STAGES = [

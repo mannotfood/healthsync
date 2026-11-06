@@ -45,11 +45,13 @@ from .const import (
     METRIC_RESTING_ENERGY,
     METRIC_RESTING_HEART_RATE,
     METRIC_SLEEP_BREATHING_DISTURBANCES,
+    METRIC_STAND_HOURS,
     METRIC_STEPS,
     METRIC_VO2_MAX,
     METRIC_WAIST_CIRCUMFERENCE,
     METRIC_WALKING_HEART_RATE,
     METRIC_WEIGHT,
+    METRIC_WRIST_TEMPERATURE,
     SIGNAL_UPDATE,
     SIGNAL_WORKOUT,
     WORKOUT_TYPE_ICONS,
@@ -165,6 +167,14 @@ async def async_setup_entry(
                 entry, data, METRIC_BODY_TEMPERATURE, "Body temperature", UnitOfTemperature.CELSIUS,
                 "mdi:thermometer", device_class=SensorDeviceClass.TEMPERATURE,
             ),
+            # Added 3 Nov 2026 -- requested via GitHub #26. A delta-from-
+            # baseline reading, not an absolute temperature, but it shares
+            # bodyTemperature's unit/device_class -- HA has no separate
+            # "temperature delta" device class.
+            LatestValueSensor(
+                entry, data, METRIC_WRIST_TEMPERATURE, "Wrist temperature", UnitOfTemperature.CELSIUS,
+                "mdi:thermometer-low", device_class=SensorDeviceClass.TEMPERATURE,
+            ),
             LatestValueSensor(
                 entry, data, METRIC_BLOOD_GLUCOSE, "Blood glucose", "mg/dL", "mdi:diabetes"
             ),
@@ -204,6 +214,16 @@ async def async_setup_entry(
             # them, now that the ingestion pipeline is fully metric-agnostic.
             DailyTotalSensor(
                 entry, data, METRIC_FLIGHTS_CLIMBED, "Flights climbed today", "flights", "mdi:stairs"
+            ),
+            # Added 3 Nov 2026 -- requested via GitHub #27. Count of today's
+            # "stood" hours (HealthKit's third Activity ring), matching Apple's
+            # own Fitness app semantics ("N/12") -- see the iOS app's
+            # HealthMetricType.standHours doc comment for why this is a
+            # category-backed metric rather than a quantity sum, though the
+            # wire format/HA-side handling is identical to every other
+            # DailyTotalSensor here.
+            DailyTotalSensor(
+                entry, data, METRIC_STAND_HOURS, "Stand hours today", "h", "mdi:account-clock-outline"
             ),
             DailyTotalSensor(
                 entry, data, METRIC_EXERCISE_TIME, "Exercise time today", "min", "mdi:timer-outline",
